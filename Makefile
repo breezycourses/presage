@@ -54,7 +54,7 @@ deploy: install ## Deploy the controller into the current cluster
 	kubectl apply -k config
 
 .PHONY: verify
-verify: lint test forecaster-test validate-examples ## Everything CI runs
+verify: lint test forecaster-test validate-examples chart-lint chart-validate ## Everything CI runs
 
 .PHONY: validate-examples
 validate-examples: ## Check the examples against the generated CRD schemas
@@ -76,6 +76,25 @@ test-e2e: ## Run the controller e2e suite against a real API server
 test-model-e2e: ## Run the forecaster against the real TimesFM checkpoint (downloads ~1GB)
 	cd forecaster && PRESAGE_E2E=1 uv run --extra torch --extra dev pytest tests/test_real_model.py -v
 
+# --- Helm ---------------------------------------------------------------
+CHART_DIR ?= charts/presage
+
+.PHONY: chart-sync-crds
+chart-sync-crds: generate ## Copy generated CRDs into the chart
+	cp config/crd/*.yaml $(CHART_DIR)/crds/
+
+.PHONY: chart-lint
+chart-lint: ## helm lint
+	helm lint $(CHART_DIR)
+
+.PHONY: chart-validate
+chart-validate: ## Render the chart across value permutations and assert its invariants
+	uv run --with pyyaml python hack/validate_chart.py
+
+.PHONY: chart-package
+chart-package: ## Package the chart into dist/
+	mkdir -p dist && helm package $(CHART_DIR) -d dist
+  
 .PHONY: check-model-license
 check-model-license: ## Re-check the pinned checkpoint's licence and gating (needs network)
 	python3 hack/check_model_license.py
