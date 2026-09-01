@@ -114,3 +114,18 @@ chart-package: ## Package the chart into dist/
 .PHONY: check-model-license
 check-model-license: ## Re-check the pinned checkpoint's licence and gating (needs network)
 	python3 hack/check_model_license.py
+
+.PHONY: backtest-charts
+backtest-charts: ## Regenerate the README backtest charts from the demo signal
+	@python3 hack/backtest-demo-signal.py 9099 & echo $$! > /tmp/presage-demo.pid; sleep 2; \
+	go run ./cmd/backtest -address http://127.0.0.1:9099 -query 'sum(players)' \
+	  -window 672h -resolution 5m -lead-time 10m -interval 15m \
+	  -per-replica 80 -min-replicas 4 -max-replicas 60 -static 14 \
+	  -chart-dir docs/assets -out docs/backtest-report.md $(BACKTEST_FLAGS); \
+	status=$$?; kill $$(cat /tmp/presage-demo.pid) 2>/dev/null; exit $$status
+
+.PHONY: backtest-charts-pdf
+backtest-charts-pdf: ## Render the backtest charts to PDF as well as SVG
+	@for f in docs/assets/backtest-*.svg; do \
+	  rsvg-convert -f pdf "$$f" -o "$${f%.svg}.pdf" && echo "wrote $${f%.svg}.pdf"; \
+	done
