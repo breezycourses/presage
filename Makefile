@@ -94,3 +94,7 @@ chart-validate: ## Render the chart across value permutations and assert its inv
 .PHONY: chart-package
 chart-package: ## Package the chart into dist/
 	mkdir -p dist && helm package $(CHART_DIR) -d dist
+  
+.PHONY: check-model-license
+check-model-license: ## Re-check the pinned checkpoint's licence and gating (needs network)
+	python3 hack/check_model_license.py

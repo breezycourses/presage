@@ -341,6 +341,12 @@ type ForecastSample struct {
 	// Model identifier reported by the backend, if any.
 	// +optional
 	Model string `json:"model,omitempty"`
+	// Revision of the model weights, when the backend pins one. presage does
+	// not vendor weights, so recording which revision produced a forecast is
+	// the only way to explain a behaviour change that came from the model
+	// rather than from configuration.
+	// +optional
+	Revision string `json:"revision,omitempty"`
 	// LeadTimeSeconds actually used for this forecast.
 	LeadTimeSeconds int32 `json:"leadTimeSeconds"`
 	// Point is the point forecast at the lead time.

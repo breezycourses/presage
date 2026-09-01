@@ -40,6 +40,36 @@ def client(model):
     return TestClient(create_app(Config(), model=model))
 
 
+def test_forecast_reports_model_revision():
+    """Provenance must ride on the response, not only on /v1/model.
+
+    A recorded forecast has to be explainable later: if the weights changed,
+    the number it produced should say so.
+    """
+    cfg = Config(model_revision="deadbeef")
+    resp = TestClient(create_app(cfg, model=StubModel())).post(
+        "/v1/forecast",
+        json={
+            "series": [{"id": "a", "values": [1, 2], "resolution_seconds": 300}],
+            "horizon": 2,
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["revision"] == "deadbeef"
+
+
+def test_unpinned_revision_is_reported_as_null():
+    cfg = Config(model_revision=None)
+    resp = TestClient(create_app(cfg, model=StubModel())).post(
+        "/v1/forecast",
+        json={
+            "series": [{"id": "a", "values": [1, 2], "resolution_seconds": 300}],
+            "horizon": 2,
+        },
+    )
+    assert resp.json()["revision"] is None
+
+
 def test_forecast_round_trip():
     resp = client(StubModel()).post(
         "/v1/forecast",
