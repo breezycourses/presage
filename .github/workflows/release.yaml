@@ -9,8 +9,13 @@ name: release
 # manifest list. QEMU cross-building works but the forecaster image installs
 # torch, and emulated arm64 turns a three-minute build into a forty-minute one.
 
+# Tags publish a release. Pushes to main publish dev images so that what is on
+# main is always installable without waiting for a tag -- but not the chart:
+# every chart version becomes a row on the Artifact Hub listing, and a row per
+# commit would bury the releases people actually want.
 on:
   push:
+    branches: [main]
     tags: ['v*']
   workflow_dispatch:
     inputs:
@@ -30,27 +35,42 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.v.outputs.version }}
+      release: ${{ steps.v.outputs.release }}
     steps:
       - uses: actions/checkout@v4
       - id: v
         run: |
+          set -euo pipefail
+          chart="$(awk '/^version:/ {print $2; exit}' charts/presage/Chart.yaml)"
+          app="$(awk '/^appVersion:/ {print $2; exit}' charts/presage/Chart.yaml | tr -d '"')"
+
           if [ "${{ github.event_name }}" = workflow_dispatch ]; then
             version="${{ inputs.version }}"
-          else
+            release=true
+          elif [ "${{ startsWith(github.ref, 'refs/tags/v') }}" = true ]; then
             version="${GITHUB_REF_NAME#v}"
+            release=true
+          else
+            # A prerelease semver, so the tag sorts below any real release and
+            # is recognisable as "whatever main happened to be".
+            version="${chart}-dev.$(git rev-parse --short HEAD)"
+            release=false
           fi
+
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "release=$release" >> "$GITHUB_OUTPUT"
+          echo "publishing $version (release=$release)"
 
           # A chart published under a version that does not match its tag is
           # worse than no chart: `helm upgrade` would move users to something
           # nobody can locate in git.
-          chart="$(awk '/^version:/ {print $2; exit}' charts/presage/Chart.yaml)"
-          app="$(awk '/^appVersion:/ {print $2; exit}' charts/presage/Chart.yaml | tr -d '"')"
-          for name in chart:"$chart" appVersion:"$app"; do
-            if [ "${name#*:}" != "$version" ]; then
-              echo "::error::${name%%:*} is ${name#*:}, tag says $version" && exit 1
-            fi
-          done
+          if [ "$release" = true ]; then
+            for name in chart:"$chart" appVersion:"$app"; do
+              if [ "${name#*:}" != "$version" ]; then
+                echo "::error::${name%%:*} is ${name#*:}, tag says $version" && exit 1
+              fi
+            done
+          fi
 
   images:
     needs: version
@@ -99,7 +119,15 @@ jobs:
           set -euo pipefail
           repo="${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}"
           version="${{ needs.version.outputs.version }}"
-          for tag in "$version" latest; do
+          tags="$version"
+          # `latest` follows releases only. Pointing it at main would make the
+          # default tag a moving target nobody chose to install.
+          if [ "${{ needs.version.outputs.release }}" = true ]; then
+            tags="$tags latest"
+          else
+            tags="$tags main"
+          fi
+          for tag in $tags; do
             docker buildx imagetools create -t "$repo:$tag" \
               "$repo:$version-amd64" "$repo:$version-arm64"
           done
@@ -107,6 +135,7 @@ jobs:
 
   chart:
     needs: [version, manifests]
+    if: needs.version.outputs.release == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
