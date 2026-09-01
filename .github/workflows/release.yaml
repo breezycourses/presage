@@ -1,0 +1,150 @@
+name: release
+
+# Everything a release consists of, driven by one tag:
+#   ghcr.io/breezycourses/presage             the controller image
+#   ghcr.io/breezycourses/presage-forecaster  the TimesFM model server
+#   ghcr.io/breezycourses/charts/presage      the Helm chart, as an OCI artifact
+#
+# Images are built on native runners per architecture and joined into a
+# manifest list. QEMU cross-building works but the forecaster image installs
+# torch, and emulated arm64 turns a three-minute build into a forty-minute one.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to publish (without the leading v)
+        required: true
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        run: |
+          if [ "${{ github.event_name }}" = workflow_dispatch ]; then
+            version="${{ inputs.version }}"
+          else
+            version="${GITHUB_REF_NAME#v}"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+          # A chart published under a version that does not match its tag is
+          # worse than no chart: `helm upgrade` would move users to something
+          # nobody can locate in git.
+          chart="$(awk '/^version:/ {print $2; exit}' charts/presage/Chart.yaml)"
+          app="$(awk '/^appVersion:/ {print $2; exit}' charts/presage/Chart.yaml | tr -d '"')"
+          for name in chart:"$chart" appVersion:"$app"; do
+            if [ "${name#*:}" != "$version" ]; then
+              echo "::error::${name%%:*} is ${name#*:}, tag says $version" && exit 1
+            fi
+          done
+
+  images:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {image: presage,            context: .,            runner: ubuntu-latest,   arch: amd64}
+          - {image: presage,            context: .,            runner: ubuntu-24.04-arm, arch: arm64}
+          - {image: presage-forecaster, context: ./forecaster, runner: ubuntu-latest,   arch: amd64}
+          - {image: presage-forecaster, context: ./forecaster, runner: ubuntu-24.04-arm, arch: arm64}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          platforms: linux/${{ matrix.arch }}
+          push: true
+          provenance: false
+          build-args: VERSION=${{ needs.version.outputs.version }}
+          tags: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}:${{ needs.version.outputs.version }}-${{ matrix.arch }}
+          cache-from: type=gha,scope=${{ matrix.image }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}-${{ matrix.arch }}
+
+  manifests:
+    needs: [version, images]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        image: [presage, presage-forecaster]
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Join the per-architecture images into one manifest
+        run: |
+          set -euo pipefail
+          repo="${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}"
+          version="${{ needs.version.outputs.version }}"
+          for tag in "$version" latest; do
+            docker buildx imagetools create -t "$repo:$tag" \
+              "$repo:$version-amd64" "$repo:$version-arm64"
+          done
+          docker buildx imagetools inspect "$repo:$version"
+
+  chart:
+    needs: [version, manifests]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - uses: astral-sh/setup-uv@v5
+
+      - run: make chart-lint chart-validate
+
+      - name: Log in to the registry
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" |
+            helm registry login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
+
+      - name: Package and push the chart
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          helm package charts/presage -d dist
+          helm push dist/presage-*.tgz \
+            oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts
+
+      # Artifact Hub reads repository metadata for an OCI repository from a
+      # special `artifacthub.io` tag rather than from a file in the git repo.
+      # Without this push the listing cannot be claimed or verified, however
+      # correct artifacthub-repo.yml looks in the source tree.
+      - name: Publish the Artifact Hub repository metadata
+        run: |
+          set -euo pipefail
+          curl -sSLo oras.tar.gz \
+            https://github.com/oras-project/oras/releases/download/v1.2.0/oras_1.2.0_linux_amd64.tar.gz
+          tar -xzf oras.tar.gz oras && sudo mv oras /usr/local/bin/
+
+          oras push \
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/charts/presage:artifacthub.io \
+            --config /dev/null:application/vnd.cncf.artifacthub.config.v1+yaml \
+            artifacthub-repo.yml:application/vnd.cncf.artifacthub.repository-metadata.layer.v1.yaml
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: helm-chart
+          path: dist/*.tgz

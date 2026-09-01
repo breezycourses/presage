@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/GrowlyX/presage/internal/policy"
+	"github.com/breezycourses/presage/internal/policy"
 )
 
 const res = time.Minute

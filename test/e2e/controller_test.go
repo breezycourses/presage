@@ -20,9 +20,9 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/GrowlyX/presage/api/v1alpha1"
-	"github.com/GrowlyX/presage/internal/agones"
-	"github.com/GrowlyX/presage/internal/scaletarget"
+	"github.com/breezycourses/presage/api/v1alpha1"
+	"github.com/breezycourses/presage/internal/agones"
+	"github.com/breezycourses/presage/internal/scaletarget"
 )
 
 const (

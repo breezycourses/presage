@@ -1,10 +1,15 @@
 # Artifact Hub repository metadata.
 #
-# Artifact Hub looks for this file at the root of the chart repository to
-# verify ownership. The repositoryID is issued by Artifact Hub when the
-# repository is first registered; until then it is empty and the repo is
-# simply unverified rather than broken.
+# For an OCI-hosted chart this file is NOT read from the git repository. It is
+# pushed to the registry under the special `artifacthub.io` tag by the release
+# workflow, and Artifact Hub pulls it from there. It is kept in the source tree
+# because that is what the workflow pushes, and so that changing it is a
+# reviewable diff.
+#
+# repositoryID is issued by Artifact Hub when the repository is first added.
+# Until it is filled in, the listing works but cannot be claimed as verified.
+# See RELEASING.md.
 repositoryID: ""
 owners:
-  - name: GrowlyX
+  - name: Subham K.
     email: me@growly.gg

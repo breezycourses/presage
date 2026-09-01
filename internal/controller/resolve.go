@@ -9,7 +9,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
-	"github.com/GrowlyX/presage/internal/policy"
+	"github.com/breezycourses/presage/internal/policy"
 )
 
 // Defaults applied when a field is omitted. They are here rather than only in

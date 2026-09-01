@@ -6,7 +6,7 @@ body:
     attributes:
       value: |
         For security issues, use
-        [private reporting](https://github.com/GrowlyX/presage/security/advisories/new)
+        [private reporting](https://github.com/breezycourses/presage/security/advisories/new)
         instead. Do not file them here.
 
   - type: textarea
