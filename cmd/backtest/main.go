@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -44,6 +45,7 @@ func main() {
 		staticRep  = flag.Int("static", 0, "Also compare against a fixed replica count")
 		token      = flag.String("bearer-token", "", "Bearer token for the metrics endpoint")
 		out        = flag.String("out", "", "Write the report here instead of stdout")
+		chartDir   = flag.String("chart-dir", "", "Write timeline and trade-off charts (SVG) here")
 	)
 	flag.Parse()
 
@@ -61,7 +63,7 @@ func main() {
 		targetQ: *targetQ, lowerQ: *lowerQ,
 		season:  *season,
 		timesfm: *timesfm, maxContext: *maxContext, maxHorizon: *maxHorizon,
-		staticRep: int32(*staticRep), out: *out,
+		staticRep: int32(*staticRep), out: *out, chartDir: *chartDir,
 	}); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
@@ -80,7 +82,7 @@ type runConfig struct {
 	timesfm                      string
 	maxContext, maxHorizon       int
 	staticRep                    int32
-	out                          string
+	out, chartDir                string
 }
 
 func run(cfg runConfig) error {
@@ -217,6 +219,12 @@ func run(cfg runConfig) error {
 		isoCost[s.Strategy] = iso
 	}
 
+	if cfg.chartDir != "" {
+		if err := writeCharts(cfg.chartDir, scores, opts); err != nil {
+			return err
+		}
+	}
+
 	report := backtest.Report(scores, opts, isoCost)
 	if cfg.out == "" {
 		fmt.Print(report)
@@ -227,6 +235,64 @@ func run(cfg runConfig) error {
 	}
 	fmt.Fprintf(os.Stderr, "wrote %s\n", cfg.out)
 	return nil
+}
+
+// writeCharts renders the run rather than only summarising it. A table of
+// averages cannot show *when* a strategy was short, which is usually the
+// question that decides whether to trust it.
+func writeCharts(dir string, scores []backtest.Score, opts backtest.Options) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+
+	// The timeline gets the strategies worth comparing directly. The oracle is
+	// left out: it is a reference bound, and plotting it alongside the others
+	// invites reading it as an option.
+	timeline := make([]backtest.Score, 0, len(scores))
+	for _, s := range scores {
+		if !strings.HasPrefix(s.Strategy, "oracle") {
+			timeline = append(timeline, s)
+		}
+	}
+
+	// Three days is enough to see whether a strategy moved before the ramp or
+	// after it, which is the entire claim and is invisible on the full run.
+	zoomSteps := int((72 * time.Hour) / opts.Resolution)
+	scored := 0
+	if len(timeline) > 0 {
+		scored = timeline[0].Steps
+	}
+
+	files := map[string]string{
+		"backtest-timeline.svg": backtest.Timeline(timeline, opts, backtest.TimelineOptions{
+			Title: "Provisioned capacity against demand",
+		}),
+		"backtest-timeline-zoom.svg": backtest.Timeline(timeline, opts, backtest.TimelineOptions{
+			Title:       "The last three days, close up",
+			Height:      420,
+			LastSteps:   zoomSteps,
+			StartOffset: maxInt(scored-zoomSteps, 0),
+		}),
+		"backtest-tradeoff.svg": backtest.Tradeoff(scores, "Cost against service quality"),
+	}
+	for name, svg := range files {
+		if svg == "" {
+			continue
+		}
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(svg), 0o644); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "wrote %s\n", path)
+	}
+	return nil
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // parseAmount accepts "5" or "10%".

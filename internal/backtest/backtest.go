@@ -86,6 +86,23 @@ type Score struct {
 
 	// Errors is how many decisions failed and were held at the previous count.
 	Errors int
+
+	// Trace is the per-step history, kept so the run can be plotted rather
+	// than only summarised. A table of averages hides the thing you most want
+	// to see -- *when* a strategy was short, and whether it was short during
+	// the ramps or scattered through the noise.
+	Trace Trace
+}
+
+// Trace is the per-step record of one strategy's run. All slices are the same
+// length and are indexed from the first scored step.
+type Trace struct {
+	// Provisioned is the replica count actually running at each step.
+	Provisioned []int32
+	// Required is the replica count demand needed at each step.
+	Required []int32
+	// Unmet is the shortfall in signal units at each step.
+	Unmet []float64
 }
 
 // AvgReplicas is the mean provisioned replica count over the scored window.
@@ -118,7 +135,15 @@ func Run(ctx context.Context, opts Options, strategy Strategy) (Score, error) {
 		leadSteps = 0
 	}
 
-	score := Score{Strategy: strategy.Name()}
+	steps := len(opts.Series) - opts.Warmup
+	score := Score{
+		Strategy: strategy.Name(),
+		Trace: Trace{
+			Provisioned: make([]int32, 0, steps),
+			Required:    make([]int32, 0, steps),
+			Unmet:       make([]float64, 0, steps),
+		},
+	}
 	current := opts.InitialReplicas
 
 	/* Replicas in flight are modelled as arriving cohorts rather than as a
@@ -163,6 +188,11 @@ func Run(ctx context.Context, opts Options, strategy Strategy) (Score, error) {
 			score.MaxUnmet = math.Max(score.MaxUnmet, unmet)
 		}
 		unmets = append(unmets, unmet)
+
+		score.Trace.Provisioned = append(score.Trace.Provisioned, current)
+		score.Trace.Required = append(score.Trace.Required,
+			int32(math.Ceil(demand/opts.PerReplica))) //nolint:gosec // replica counts are small
+		score.Trace.Unmet = append(score.Trace.Unmet, unmet)
 
 		// Decide, on the configured cadence.
 		if (now-opts.Warmup)%opts.EvalEvery != 0 {
