@@ -1,0 +1,81 @@
+{{- if .Values.rbac.create }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "presage.fullname" . }}
+  labels: {{- include "presage.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["scaling.presage.sh"]
+    resources: ["predictivescalers", "forecastbackends"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["scaling.presage.sh"]
+    resources: ["predictivescalers/status", "forecastbackends/status"]
+    verbs: ["get", "update", "patch"]
+  - apiGroups: ["scaling.presage.sh"]
+    resources: ["predictivescalers/finalizers"]
+    verbs: ["update"]
+  # Reading the workload and writing its scale subresource. Note there is no
+  # verb on the workloads themselves beyond read: presage changes replica
+  # counts through /scale, never by patching spec.
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "replicasets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments/scale", "statefulsets/scale", "replicasets/scale"]
+    verbs: ["get", "update", "patch"]
+  {{- if .Values.rbac.agones }}
+  # Read-only on Fleets. presage never writes Fleet replicas -- Agones stays
+  # the sole writer, and presage only answers its FleetAutoscaler webhook.
+  - apiGroups: ["agones.dev"]
+    resources: ["fleets"]
+    verbs: ["get", "list", "watch"]
+  {{- end }}
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "presage.fullname" . }}
+  labels: {{- include "presage.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "presage.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "presage.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- if .Values.controller.leaderElection }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "presage.fullname" . }}-leader-election
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "presage.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "presage.fullname" . }}-leader-election
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "presage.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "presage.fullname" . }}-leader-election
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "presage.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+{{- end }}
