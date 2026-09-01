@@ -1,0 +1,40 @@
+name: release-chart
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+
+      - name: Verify the chart version matches the tag
+        # A chart published under a version that does not match its tag is
+        # worse than no chart: `helm upgrade` would move users to something
+        # nobody can locate in git.
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          chart="$(helm show chart charts/presage | awk '/^version:/ {print $2}')"
+          if [ "$tag" != "$chart" ]; then
+            echo "tag $tag does not match Chart.yaml version $chart" >&2
+            exit 1
+          fi
+
+      - uses: astral-sh/setup-uv@v5
+      - run: make chart-lint chart-validate
+
+      - name: Log in to ghcr.io
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Package and push
+        run: |
+          make chart-package
+          helm push dist/presage-*.tgz oci://ghcr.io/${{ github.repository_owner }}/charts

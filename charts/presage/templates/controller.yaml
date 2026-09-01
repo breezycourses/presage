@@ -1,0 +1,87 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "presage.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "presage.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.controller.replicaCount }}
+  selector:
+    matchLabels: {{- include "presage.controllerSelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "presage.controllerSelectorLabels" . | nindent 8 }}
+        {{- with .Values.controller.podLabels }}{{- toYaml . | nindent 8 }}{{- end }}
+      {{- with .Values.controller.podAnnotations }}
+      annotations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "presage.serviceAccountName" . }}
+      {{- with .Values.controller.podSecurityContext }}
+      securityContext: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: manager
+          image: {{ include "presage.controllerImage" . }}
+          imagePullPolicy: {{ .Values.controller.image.pullPolicy }}
+          args:
+            - --metrics-bind-address={{ if .Values.metrics.enabled }}:{{ .Values.metrics.port }}{{ else }}0{{ end }}
+            - --health-probe-bind-address=:8081
+            {{- if .Values.controller.leaderElection }}
+            - --leader-elect
+            {{- end }}
+            - --agones-webhook={{ .Values.agonesWebhook.enabled }}
+            {{- if .Values.agonesWebhook.enabled }}
+            - --agones-webhook-bind-address=:{{ .Values.agonesWebhook.port }}
+            - --agones-max-recommendation-age={{ .Values.agonesWebhook.maxRecommendationAge }}
+            {{- if .Values.agonesWebhook.tls.enabled }}
+            - --agones-webhook-tls-cert=/etc/presage/tls/tls.crt
+            - --agones-webhook-tls-key=/etc/presage/tls/tls.key
+            {{- end }}
+            {{- end }}
+            {{- with .Values.controller.extraArgs }}{{- toYaml . | nindent 12 }}{{- end }}
+          ports:
+            {{- if .Values.metrics.enabled }}
+            - {name: metrics, containerPort: {{ .Values.metrics.port }}}
+            {{- end }}
+            - {name: probes, containerPort: 8081}
+            {{- if .Values.agonesWebhook.enabled }}
+            - {name: webhook, containerPort: {{ .Values.agonesWebhook.port }}}
+            {{- end }}
+          livenessProbe:
+            httpGet: {path: /healthz, port: probes}
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet: {path: /readyz, port: probes}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          {{- with .Values.controller.resources }}
+          resources: {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.controller.securityContext }}
+          securityContext: {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if and .Values.agonesWebhook.enabled .Values.agonesWebhook.tls.enabled }}
+          volumeMounts:
+            - {name: webhook-tls, mountPath: /etc/presage/tls, readOnly: true}
+          {{- end }}
+      {{- if and .Values.agonesWebhook.enabled .Values.agonesWebhook.tls.enabled }}
+      volumes:
+        - name: webhook-tls
+          secret:
+            secretName: {{ required "agonesWebhook.tls.secretName is required when TLS is enabled" .Values.agonesWebhook.tls.secretName }}
+      {{- end }}
+      {{- with .Values.controller.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.controller.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.controller.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.controller.topologySpreadConstraints }}
+      topologySpreadConstraints: {{- toYaml . | nindent 8 }}
+      {{- end }}

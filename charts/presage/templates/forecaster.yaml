@@ -1,0 +1,99 @@
+{{- if .Values.forecaster.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "presage.fullname" . }}-forecaster
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "presage.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.forecaster.replicaCount }}
+  selector:
+    matchLabels: {{- include "presage.forecasterSelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "presage.forecasterSelectorLabels" . | nindent 8 }}
+      {{- with .Values.forecaster.podAnnotations }}
+      annotations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: forecaster
+          image: {{ include "presage.forecasterImage" . }}
+          imagePullPolicy: {{ .Values.forecaster.image.pullPolicy }}
+          env:
+            - {name: PRESAGE_MODEL, value: {{ .Values.forecaster.model | quote }}}
+            - {name: PRESAGE_MODEL_REVISION, value: {{ .Values.forecaster.modelRevision | quote }}}
+            - {name: PRESAGE_MAX_CONTEXT, value: {{ .Values.forecaster.maxContext | quote }}}
+            - {name: PRESAGE_MAX_HORIZON, value: {{ .Values.forecaster.maxHorizon | quote }}}
+            - {name: PRESAGE_USE_QUANTILE_HEAD, value: {{ .Values.forecaster.useQuantileHead | quote }}}
+          ports:
+            - {name: http, containerPort: 8080}
+          livenessProbe:
+            # Liveness deliberately does not depend on the model. A 200M
+            # checkpoint takes tens of seconds to pull and compile, and a
+            # kubelet restart partway through means it never finishes.
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 20
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 10
+            failureThreshold: 60
+          {{- with .Values.forecaster.resources }}
+          resources: {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - {name: cache, mountPath: /cache}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+      volumes:
+        - name: cache
+          {{- if .Values.forecaster.cache.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "presage.fullname" . }}-forecaster-cache
+          {{- else }}
+          emptyDir: {sizeLimit: {{ .Values.forecaster.cache.emptyDirSizeLimit }}}
+          {{- end }}
+      {{- with .Values.forecaster.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.forecaster.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.forecaster.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "presage.fullname" . }}-forecaster
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "presage.labels" . | nindent 4 }}
+spec:
+  selector: {{- include "presage.forecasterSelectorLabels" . | nindent 4 }}
+  ports:
+    - {name: http, port: 8080, targetPort: http}
+{{- if .Values.forecaster.cache.persistence.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "presage.fullname" . }}-forecaster-cache
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "presage.labels" . | nindent 4 }}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: {{ .Values.forecaster.cache.persistence.size }}
+  {{- with .Values.forecaster.cache.persistence.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+{{- end }}
+{{- end }}
