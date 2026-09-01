@@ -13,6 +13,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
@@ -119,7 +120,7 @@ func baseScaler(ns, name string, target v1alpha1.ScaleTargetRef) *v1alpha1.Predi
 			Mode:           v1alpha1.ModeShadow,
 			Interval:       &metav1.Duration{Duration: time.Second},
 			ScaleTargetRef: target,
-			Signal: v1alpha1.SignalSpec{
+			Signal: &v1alpha1.SignalSpec{
 				Prometheus: &v1alpha1.PrometheusSignal{
 					Address: prom.URL,
 					Query:   "sum(demand)",
@@ -576,3 +577,92 @@ func boolPtr(b bool) *bool                                 { return &b }
 func intOrStrPtr(v intstr.IntOrString) *intstr.IntOrString { return &v }
 
 var _ = client.ObjectKey{}
+
+// TestMultipleSignalsTakeTheLargest: a workload has to be big enough for every
+// dimension it serves, so the binding signal is whichever needs the most.
+func TestMultipleSignalsTakeTheLargest(t *testing.T) {
+	ns := newNamespace(t)
+	ensureBackend(t, "default")
+	newDeployment(t, ns, "api", 2)
+
+	prom.setSeries(constantSeries(100))
+
+	ps := baseScaler(ns, "api", v1alpha1.ScaleTargetRef{
+		APIVersion: "apps/v1", Kind: "Deployment", Name: "api",
+	})
+	ps.Spec.Mode = v1alpha1.ModeEnforce
+	// Same underlying series, different capacities: "cpu" needs 20 replicas,
+	// "players" needs 10, so the recommendation must be 20.
+	ps.Spec.Signal = nil
+	ps.Spec.Capacity = nil
+	ps.Spec.Signals = []v1alpha1.NamedSignal{
+		{
+			Name:       "players",
+			Prometheus: &v1alpha1.PrometheusSignal{Address: prom.URL, Query: "sum(players)"},
+			Resolution: &metav1.Duration{Duration: resolution},
+			History:    &metav1.Duration{Duration: history},
+			Capacity:   v1alpha1.CapacitySpec{PerReplica: quantityPtr("10")},
+		},
+		{
+			Name:       "cpu",
+			Prometheus: &v1alpha1.PrometheusSignal{Address: prom.URL, Query: "sum(cpu)"},
+			Resolution: &metav1.Duration{Duration: resolution},
+			History:    &metav1.Duration{Duration: history},
+			Capacity:   v1alpha1.CapacitySpec{PerReplica: quantityPtr("5")},
+		},
+	}
+	if err := k8sClient.Create(context.Background(), ps); err != nil {
+		t.Fatalf("create PredictiveScaler: %v", err)
+	}
+
+	eventually(t, 30*time.Second, func() error {
+		got := getScaler(t, ns, "api")
+		if got.Status.RecommendedReplicas != 20 {
+			return fmt.Errorf("recommendedReplicas = %d, want 20 (the cpu signal)",
+				got.Status.RecommendedReplicas)
+		}
+		if got.Status.Breakdown == nil || got.Status.Breakdown.BindingSignal != "cpu" {
+			return fmt.Errorf("bindingSignal = %v, want cpu", got.Status.Breakdown)
+		}
+		if len(got.Status.SignalStatuses) != 2 {
+			return fmt.Errorf("expected per-signal status for both signals, got %d",
+				len(got.Status.SignalStatuses))
+		}
+		return nil
+	})
+}
+
+// TestBothSignalFormsIsRejected: the two spec shapes are alternatives, and
+// silently preferring one would make the other look ignored.
+func TestBothSignalFormsIsRejected(t *testing.T) {
+	ns := newNamespace(t)
+	ensureBackend(t, "default")
+	newDeployment(t, ns, "api", 2)
+	prom.setSeries(constantSeries(100))
+
+	ps := baseScaler(ns, "api", v1alpha1.ScaleTargetRef{
+		APIVersion: "apps/v1", Kind: "Deployment", Name: "api",
+	})
+	ps.Spec.Signals = []v1alpha1.NamedSignal{{
+		Name:       "extra",
+		Prometheus: &v1alpha1.PrometheusSignal{Address: prom.URL, Query: "sum(x)"},
+		Capacity:   v1alpha1.CapacitySpec{PerReplica: quantityPtr("10")},
+	}}
+	if err := k8sClient.Create(context.Background(), ps); err != nil {
+		t.Fatalf("create PredictiveScaler: %v", err)
+	}
+
+	eventually(t, 30*time.Second, func() error {
+		got := getScaler(t, ns, "api")
+		status, reason := conditionStatus(got, v1alpha1.ConditionReady)
+		if status != metav1.ConditionFalse || reason != "EvaluationFailed" {
+			return fmt.Errorf("Ready = %q/%q, want False/EvaluationFailed", status, reason)
+		}
+		return nil
+	})
+}
+
+func quantityPtr(s string) *resource.Quantity {
+	q := resource.MustParse(s)
+	return &q
+}

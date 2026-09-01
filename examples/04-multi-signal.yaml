@@ -1,0 +1,59 @@
+# Scaling on more than one dimension.
+#
+# Each signal becomes a replica requirement independently and the largest
+# binds, the way an HPA combines multiple metrics. A workload has to be big
+# enough for every dimension it serves, so summing or averaging them would let
+# a quiet dimension mask a busy one.
+#
+# status.breakdown.bindingSignal names whichever one is driving the size, and
+# status.signalStatuses carries the per-signal numbers.
+apiVersion: scaling.presage.sh/v1alpha1
+kind: PredictiveScaler
+metadata:
+  name: lobby
+  namespace: default
+spec:
+  mode: Shadow
+  scaleTargetRef:
+    apiVersion: agones.dev/v1
+    kind: Fleet
+    name: lobby
+
+  signals:
+    # Players is the demand signal you actually care about.
+    - name: players
+      prometheus:
+        address: http://vmselect.monitoring:8481/select/0/prometheus
+        query: sum(archmc_server_players{fleet="lobby"})
+      resolution: 5m
+      history: 336h        # 14 days -- Go durations have no day unit
+      capacity:
+        perReplica: "80"   # players one server holds
+
+    # CPU is the constraint that bites first when players are unusually
+    # expensive -- a big build, a redstone contraption, a plugin regression.
+    # Forecasting it separately means the fleet grows for that too.
+    - name: cpu
+      prometheus:
+        address: http://vmselect.monitoring:8481/select/0/prometheus
+        query: sum(rate(container_cpu_usage_seconds_total{pod=~"lobby-.*"}[5m]))
+      resolution: 5m
+      history: 336h
+      capacity:
+        perReplica: "1.4"  # cores one server can use before ticks suffer
+
+  leadTime:
+    source: Static
+    static: 2m
+
+  forecast:
+    backendRef: default
+
+  policy:
+    minReplicas: 3
+    maxReplicas: 40
+    targetQuantile: "0.9"
+    headroom: "10%"
+    reactiveFloor:
+      enabled: true
+      bufferSize: 2

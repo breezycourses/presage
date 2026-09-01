@@ -129,12 +129,15 @@ func (p *Predictive) Decide(ctx context.Context, history []float64, now int, cur
 	}
 
 	decision, err := policy.Evaluate(p.Policy, policy.Input{
-		Now:                     p.clock,
-		CurrentReplicas:         current,
-		PerReplica:              p.PerReplica,
-		ForecastUp:              up,
-		ForecastDown:            down,
-		CurrentDemand:           history[now],
+		Now:             p.clock,
+		CurrentReplicas: current,
+		Signals: []policy.Signal{{
+			Name:          "backtest",
+			PerReplica:    p.PerReplica,
+			ForecastUp:    up,
+			ForecastDown:  down,
+			CurrentDemand: history[now],
+		}},
 		ScaleDownCandidateSince: p.scaleDownCandidateSince,
 	})
 	if err != nil {

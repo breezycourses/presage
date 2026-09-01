@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"math"
 	"net/http"
 	"time"
 
@@ -129,49 +130,23 @@ func (r *PredictiveScalerReconciler) evaluate(ctx context.Context, ps *v1alpha1.
 	labels := []string{ps.Namespace, ps.Name, target.Describe()}
 	obs.CurrentReplicas.WithLabelValues(labels...).Set(float64(current))
 
-	if ps.Spec.Signal.Prometheus == nil {
-		return fmt.Errorf("spec.signal.prometheus is required")
-	}
-	signalClient, err := r.metricsClient(ctx, ps.Namespace, ps.Spec.Signal.Prometheus)
+	signals, err := resolveSignals(ps)
 	if err != nil {
 		return err
 	}
 
-	resolution := durOr(ps.Spec.Signal.Resolution, defaultResolution)
-	history := durOr(ps.Spec.Signal.History, defaultHistory)
-
-	// Align the range to the resolution grid so successive reconciles ask for
-	// the same buckets. Without this, every reconcile shifts the grid by a few
-	// seconds and the model sees a subtly different series each time.
-	end := now.Truncate(resolution)
-	start := end.Add(-history)
-
-	series, err := signalClient.QueryRange(ctx, ps.Spec.Signal.Prometheus.Query, start, end, resolution)
+	leadSpec := ps.Spec.LeadTime
+	baseAddress := signals[0].prometheus.Address
+	baseClient, err := r.metricsClient(ctx, ps.Namespace, signals[0].prometheus)
 	if err != nil {
 		return err
 	}
-	obs.SignalGaps.WithLabelValues(ps.Namespace, ps.Name).Set(float64(series.Gaps))
 
-	// A series that is mostly interpolation is not evidence of anything.
-	if gapRatio := float64(series.Gaps) / float64(series.Steps); gapRatio > maxGapRatio {
-		return fmt.Errorf("signal is %.0f%% gap-filled over %s; "+
-			"check the query, the scrape interval, or lower spec.signal.resolution",
-			gapRatio*100, history)
-	}
-
-	currentDemand := series.Values[len(series.Values)-1]
-	obs.SignalValue.WithLabelValues(ps.Namespace, ps.Name).Set(currentDemand)
-
-	leadTime, err := r.leadTime(ctx, ps, signalClient, now)
+	leadTime, err := r.leadTime(ctx, leadSpec, ps.Namespace, baseAddress, baseClient, now)
 	if err != nil {
 		return err
 	}
 	obs.LeadTimeSeconds.WithLabelValues(labels...).Set(leadTime.Seconds())
-
-	perReplica, err := r.perReplicaCapacity(ctx, ps, signalClient, now)
-	if err != nil {
-		return err
-	}
 
 	targetQ, err := parseQuantile(ps.Spec.Policy.TargetQuantile, defaultTargetQuantile)
 	if err != nil {
@@ -187,45 +162,114 @@ func (r *PredictiveScalerReconciler) evaluate(ctx context.Context, ps *v1alpha1.
 		return err
 	}
 
-	leadSteps := forecast.StepsFor(leadTime, resolution)
-	horizon := durOr(horizonOf(ps), time.Duration(defaultHorizonFactor)*leadTime)
-	horizonSteps := forecast.StepsFor(horizon, resolution)
-	if horizonSteps < leadSteps {
-		horizonSteps = leadSteps
+	policySignals := make([]policy.Signal, 0, len(signals))
+	statuses := make([]v1alpha1.SignalStatus, 0, len(signals))
+	samples := make(map[string]*v1alpha1.ForecastSample, len(signals))
+
+	for _, sig := range signals {
+		client := baseClient
+		if sig.prometheus.Address != baseAddress {
+			if client, err = r.metricsClient(ctx, ps.Namespace, sig.prometheus); err != nil {
+				return fmt.Errorf("signal %q: %w", sig.name, err)
+			}
+		}
+
+		// Align the range to the resolution grid so successive reconciles ask
+		// for the same buckets. Without this every reconcile shifts the grid by
+		// a few seconds and the model sees a subtly different series each time.
+		end := now.Truncate(sig.resolution)
+		start := end.Add(-sig.history)
+
+		series, err := client.QueryRange(ctx, sig.prometheus.Query, start, end, sig.resolution)
+		if err != nil {
+			return fmt.Errorf("signal %q: %w", sig.name, err)
+		}
+		obs.SignalGaps.WithLabelValues(ps.Namespace, ps.Name, sig.name).Set(float64(series.Gaps))
+
+		// A series that is mostly interpolation is not evidence of anything.
+		if gapRatio := float64(series.Gaps) / float64(series.Steps); gapRatio > maxGapRatio {
+			return fmt.Errorf("signal %q is %.0f%% gap-filled over %s; "+
+				"check the query, the scrape interval, or lower the signal resolution",
+				sig.name, gapRatio*100, sig.history)
+		}
+
+		currentDemand := series.Values[len(series.Values)-1]
+		obs.SignalValue.WithLabelValues(ps.Namespace, ps.Name, sig.name).Set(currentDemand)
+
+		perReplica, err := r.perReplicaCapacity(ctx, sig.capacity, ps.Namespace, baseAddress, client, now)
+		if err != nil {
+			return fmt.Errorf("signal %q: %w", sig.name, err)
+		}
+
+		leadSteps := forecast.StepsFor(leadTime, sig.resolution)
+		horizon := durOr(horizonOf(ps), time.Duration(defaultHorizonFactor)*leadTime)
+		horizonSteps := forecast.StepsFor(horizon, sig.resolution)
+		if horizonSteps < leadSteps {
+			horizonSteps = leadSteps
+		}
+
+		started := time.Now()
+		result, err := backend.Forecast(ctx, forecast.Request{
+			Series: forecast.Series{
+				ID:         fmt.Sprintf("%s/%s/%s", ps.Namespace, ps.Name, sig.name),
+				Values:     series.Values,
+				Resolution: sig.resolution,
+				End:        end,
+			},
+			Horizon:   horizonSteps,
+			Quantiles: []float64{downQ, targetQ},
+		})
+		obs.ForecastDuration.WithLabelValues(backendName).Observe(time.Since(started).Seconds())
+		if err != nil {
+			obs.ForecastErrorTotal.WithLabelValues(backendName).Inc()
+			setCondition(ps, v1alpha1.ConditionForecasting, metav1.ConditionFalse, "ForecastFailed", err.Error())
+			return fmt.Errorf("signal %q: %w", sig.name, err)
+		}
+
+		upValue, err := result.QuantileAt(targetQ, leadSteps)
+		if err != nil {
+			return fmt.Errorf("signal %q: %w", sig.name, err)
+		}
+		downValue, err := result.QuantileAt(downQ, leadSteps)
+		if err != nil {
+			return fmt.Errorf("signal %q: %w", sig.name, err)
+		}
+		point, _, _ := result.At(leadSteps)
+
+		obs.ForecastValue.WithLabelValues(ps.Namespace, ps.Name, sig.name, fmt.Sprintf("%g", targetQ)).Set(upValue)
+		obs.ForecastValue.WithLabelValues(ps.Namespace, ps.Name, sig.name, fmt.Sprintf("%g", downQ)).Set(downValue)
+
+		policySignals = append(policySignals, policy.Signal{
+			Name:          sig.name,
+			PerReplica:    perReplica,
+			ForecastUp:    upValue,
+			ForecastDown:  downValue,
+			CurrentDemand: currentDemand,
+		})
+		statuses = append(statuses, v1alpha1.SignalStatus{
+			Name:     sig.name,
+			Replicas: int32(math.Ceil(upValue / perReplica)), //nolint:gosec // replica counts are small
+			Observed: fmt.Sprintf("%.3f", currentDemand),
+			Forecast: fmt.Sprintf("%.3f", upValue),
+			GapSteps: int32(series.Gaps), //nolint:gosec // bounded by the window
+		})
+
+		samples[sig.name] = &v1alpha1.ForecastSample{
+			GeneratedAt:     metav1.NewTime(now),
+			Backend:         result.Backend,
+			Model:           result.Model,
+			Revision:        result.Revision,
+			LeadTimeSeconds: int32(leadTime.Seconds()), //nolint:gosec // clamped above
+			Point:           fmt.Sprintf("%.3f", point),
+			Quantiles: map[string]string{
+				fmt.Sprintf("%g", targetQ): fmt.Sprintf("%.3f", upValue),
+				fmt.Sprintf("%g", downQ):   fmt.Sprintf("%.3f", downValue),
+			},
+		}
 	}
 
-	started := time.Now()
-	result, err := backend.Forecast(ctx, forecast.Request{
-		Series: forecast.Series{
-			ID:         fmt.Sprintf("%s/%s", ps.Namespace, ps.Name),
-			Values:     series.Values,
-			Resolution: resolution,
-			End:        end,
-		},
-		Horizon:   horizonSteps,
-		Quantiles: []float64{downQ, targetQ},
-	})
-	obs.ForecastDuration.WithLabelValues(backendName).Observe(time.Since(started).Seconds())
-	if err != nil {
-		obs.ForecastErrorTotal.WithLabelValues(backendName).Inc()
-		setCondition(ps, v1alpha1.ConditionForecasting, metav1.ConditionFalse, "ForecastFailed", err.Error())
-		return err
-	}
 	setCondition(ps, v1alpha1.ConditionForecasting, metav1.ConditionTrue, "ForecastReady",
-		fmt.Sprintf("%s produced a %d-step forecast", backendName, horizonSteps))
-
-	upValue, err := result.QuantileAt(targetQ, leadSteps)
-	if err != nil {
-		return err
-	}
-	downValue, err := result.QuantileAt(downQ, leadSteps)
-	if err != nil {
-		return err
-	}
-	point, _, _ := result.At(leadSteps)
-
-	obs.ForecastValue.WithLabelValues(ps.Namespace, ps.Name, fmt.Sprintf("%g", targetQ)).Set(upValue)
-	obs.ForecastValue.WithLabelValues(ps.Namespace, ps.Name, fmt.Sprintf("%g", downQ)).Set(downValue)
+		fmt.Sprintf("%s forecast %d signal(s)", backendName, len(signals)))
 
 	cfg, err := policyConfig(ps)
 	if err != nil {
@@ -241,33 +285,25 @@ func (r *PredictiveScalerReconciler) evaluate(ctx context.Context, ps *v1alpha1.
 	decision, err := policy.Evaluate(cfg, policy.Input{
 		Now:                     now,
 		CurrentReplicas:         current,
-		PerReplica:              perReplica,
-		ForecastUp:              upValue,
-		ForecastDown:            downValue,
-		CurrentDemand:           currentDemand,
+		Signals:                 policySignals,
 		ScaleDownCandidateSince: candidateSince,
 	})
 	if err != nil {
 		return err
 	}
 
+	ps.Status.SignalStatuses = statuses
 	ps.Status.RecommendedReplicas = decision.Replicas
 	ps.Status.Breakdown = &v1alpha1.RecommendationBreakdown{
-		Predictive: decision.Predictive,
-		Reactive:   decision.Reactive,
-		Constraint: string(decision.Constraint),
+		Predictive:    decision.Predictive,
+		Reactive:      decision.Reactive,
+		Constraint:    string(decision.Constraint),
+		BindingSignal: decision.BindingSignal,
 	}
-	ps.Status.LastForecast = &v1alpha1.ForecastSample{
-		GeneratedAt:     metav1.NewTime(now),
-		Backend:         result.Backend,
-		Model:           result.Model,
-		Revision:        result.Revision,
-		LeadTimeSeconds: int32(leadTime.Seconds()), //nolint:gosec // clamped above
-		Point:           fmt.Sprintf("%.3f", point),
-		Quantiles: map[string]string{
-			fmt.Sprintf("%g", targetQ): fmt.Sprintf("%.3f", upValue),
-			fmt.Sprintf("%g", downQ):   fmt.Sprintf("%.3f", downValue),
-		},
+	// Report the forecast that actually set the target, not an arbitrary one:
+	// with several signals, the interesting forecast is the binding one.
+	if sample, ok := samples[decision.BindingSignal]; ok {
+		ps.Status.LastForecast = sample
 	}
 	if decision.ScaleDownCandidateSince != nil {
 		ps.Status.ScaleDownCandidateSince = &metav1.Time{Time: *decision.ScaleDownCandidateSince}
@@ -331,6 +367,65 @@ func (r *PredictiveScalerReconciler) cleanup(ctx context.Context, ps *v1alpha1.P
 	return nil
 }
 
+// resolvedSignal is the normalised form of both spec shapes, so the rest of
+// the reconciler never has to care which one the user wrote.
+type resolvedSignal struct {
+	name       string
+	prometheus *v1alpha1.PrometheusSignal
+	resolution time.Duration
+	history    time.Duration
+	capacity   *v1alpha1.CapacitySpec
+}
+
+// resolveSignals flattens spec.signal or spec.signals into a single list.
+func resolveSignals(ps *v1alpha1.PredictiveScaler) ([]resolvedSignal, error) {
+	hasSingle := ps.Spec.Signal != nil
+	hasMulti := len(ps.Spec.Signals) > 0
+
+	switch {
+	case hasSingle && hasMulti:
+		return nil, fmt.Errorf("set exactly one of spec.signal or spec.signals, not both")
+	case !hasSingle && !hasMulti:
+		return nil, fmt.Errorf("one of spec.signal or spec.signals is required")
+	}
+
+	if hasSingle {
+		sig := ps.Spec.Signal
+		if sig.Prometheus == nil {
+			return nil, fmt.Errorf("spec.signal.prometheus is required")
+		}
+		return []resolvedSignal{{
+			name:       "default",
+			prometheus: sig.Prometheus,
+			resolution: durOr(sig.Resolution, defaultResolution),
+			history:    durOr(sig.History, defaultHistory),
+			capacity:   ps.Spec.Capacity,
+		}}, nil
+	}
+
+	out := make([]resolvedSignal, 0, len(ps.Spec.Signals))
+	seen := map[string]bool{}
+	for i := range ps.Spec.Signals {
+		sig := &ps.Spec.Signals[i]
+		if seen[sig.Name] {
+			return nil, fmt.Errorf("duplicate signal name %q", sig.Name)
+		}
+		seen[sig.Name] = true
+		if sig.Prometheus == nil {
+			return nil, fmt.Errorf("spec.signals[%q].prometheus is required", sig.Name)
+		}
+		capacity := sig.Capacity
+		out = append(out, resolvedSignal{
+			name:       sig.Name,
+			prometheus: sig.Prometheus,
+			resolution: durOr(sig.Resolution, defaultResolution),
+			history:    durOr(sig.History, defaultHistory),
+			capacity:   &capacity,
+		})
+	}
+	return out, nil
+}
+
 func (r *PredictiveScalerReconciler) buildTarget(ps *v1alpha1.PredictiveScaler) (scaletarget.Target, error) {
 	key := types.NamespacedName{Namespace: ps.Namespace, Name: ps.Spec.ScaleTargetRef.Name}
 
@@ -363,11 +458,12 @@ func (r *PredictiveScalerReconciler) buildTarget(ps *v1alpha1.PredictiveScaler) 
 // zero, which would silently turn presage into a reactive autoscaler.
 func (r *PredictiveScalerReconciler) leadTime(
 	ctx context.Context,
-	ps *v1alpha1.PredictiveScaler,
+	spec *v1alpha1.LeadTimeSpec,
+	namespace string,
+	baseAddress string,
 	fallbackClient *metrics.Client,
 	now time.Time,
 ) (time.Duration, error) {
-	spec := ps.Spec.LeadTime
 	if spec == nil {
 		return defaultLeadTime, nil
 	}
@@ -385,9 +481,9 @@ func (r *PredictiveScalerReconciler) leadTime(
 	}
 
 	c := fallbackClient
-	if spec.Observed.Address != "" && spec.Observed.Address != ps.Spec.Signal.Prometheus.Address {
+	if spec.Observed.Address != "" && spec.Observed.Address != baseAddress {
 		var err error
-		if c, err = r.metricsClient(ctx, ps.Namespace, spec.Observed); err != nil {
+		if c, err = r.metricsClient(ctx, namespace, spec.Observed); err != nil {
 			return 0, err
 		}
 	}
@@ -400,19 +496,20 @@ func (r *PredictiveScalerReconciler) leadTime(
 
 func (r *PredictiveScalerReconciler) perReplicaCapacity(
 	ctx context.Context,
-	ps *v1alpha1.PredictiveScaler,
+	spec *v1alpha1.CapacitySpec,
+	namespace string,
+	baseAddress string,
 	fallbackClient *metrics.Client,
 	now time.Time,
 ) (float64, error) {
-	spec := ps.Spec.Capacity
 	if spec == nil {
 		return 1, nil
 	}
 	if spec.Query != nil {
 		c := fallbackClient
-		if spec.Query.Address != "" && spec.Query.Address != ps.Spec.Signal.Prometheus.Address {
+		if spec.Query.Address != "" && spec.Query.Address != baseAddress {
 			var err error
-			if c, err = r.metricsClient(ctx, ps.Namespace, spec.Query); err != nil {
+			if c, err = r.metricsClient(ctx, namespace, spec.Query); err != nil {
 				return 0, err
 			}
 		}

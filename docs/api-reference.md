@@ -81,18 +81,19 @@ PredictiveScalerSpec defines the desired state of a PredictiveScaler.
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `capacity` | `object` |  | CapacitySpec converts forecast units into replicas. |
+| `capacity` | `object` |  | Capacity applies to the single-signal form only; multi-signal scalers carry a capacity per signal. |
 | `forecast` | `object` |  | ForecastSpec selects and parameterises the forecasting backend. |
 | `interval` | `string` |  | Interval is how often to refresh the forecast and recommendation. Note that for Agones targets this is decoupled from the FleetAutoscaler sync period: Agones may poll the webhook every 30s while presage refreshes the underlying forecast far less often. Default: `1m`. |
 | `leadTime` | `object` |  | LeadTimeSpec configures the forecast horizon. This is the reason predictive autoscaling beats reactive autoscaling. A reactive autoscaler observes demand at time T and starts a replica that is only useful at T+lead, so it is structurally always one lead time behind. presage forecasts demand *at* T+lead and provisions for that instead. |
 | `mode` | `Shadow` \| `Enforce` |  | Mode defaults to Shadow. Run a workload in Shadow long enough to compare the recommendation against what actually happened before switching. Default: `Shadow`. |
 | `policy` | `object` | yes | PolicySpec is the decision layer: how a predictive distribution becomes a replica count. |
 | `scaleTargetRef` | `object` | yes | ScaleTargetRef identifies the workload whose replica count is being managed. Two families of target are supported: - Anything exposing the standard `scale` subresource (Deployment, StatefulSet, ReplicaSet, and most custom resources that implement it). This is the default and requires no target-specific support in presage. - An Agones Fleet, which is NOT scaled directly. Instead presage serves a FleetAutoscaler webhook for it; see AgonesFleetTarget. |
-| `signal` | `object` | yes | SignalSpec describes the time series that drives the forecast. |
+| `signal` | `object` |  | Signal is the single-signal form, paired with the top-level Capacity. Exactly one of Signal or Signals must be set. |
+| `signals` | []`object` |  | Signals is the multi-signal form. Each entry becomes a replica requirement and the largest binds, so the workload ends up sized for whichever dimension needs the most. |
 
 ### PredictiveScaler.spec.capacity
 
-CapacitySpec converts forecast units into replicas.
+Capacity applies to the single-signal form only; multi-signal scalers carry a capacity per signal.
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -224,11 +225,11 @@ Agones carries options that only apply when Kind is "Fleet" in the agones.dev gr
 
 ### PredictiveScaler.spec.signal
 
-SignalSpec describes the time series that drives the forecast.
+Signal is the single-signal form, paired with the top-level Capacity. Exactly one of Signal or Signals must be set.
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `history` | `string` |  | History is how much past data to feed the model. Capped by the backend's maximum context length. Two to four weeks is a reasonable default for workloads with weekly seasonality. Default: `14d`. |
+| `history` | `string` |  | History is how much past data to feed the model. Capped by the backend's maximum context length. Two to four weeks is a reasonable default for workloads with weekly seasonality. Default: `336h`. |
 | `prometheus` | `object` |  | Prometheus reads the signal from a Prometheus-compatible range query endpoint (Prometheus, Thanos, Mimir, VictoriaMetrics vmselect, ...). |
 | `resolution` | `string` |  | Resolution is the bucket width the series is sampled at. This is the single most consequential tuning knob: a foundation model sees a fixed number of points, so resolution decides how far back its context reaches. At 5m with a 16k-point context you get ~57 days, which comfortably covers weekly seasonality. At 1m you get ~11 days, which does not. Default: `5m`. |
 
@@ -252,6 +253,67 @@ BearerTokenSecretRef optionally supplies an Authorization bearer token.
 | `key` | `string` | yes |  |
 | `name` | `string` | yes |  |
 
+### PredictiveScaler.spec.signals
+
+NamedSignal is one demand dimension in a multi-signal scaler. Each signal is converted to a replica requirement independently and the largest binds, the way an HPA combines multiple metrics. A workload has to be big enough for every dimension it serves, so summing or averaging them would let a quiet dimension mask a busy one.
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `capacity` | `object` | yes | Capacity converts this signal's units into replicas. Required, because there is no sensible shared default across dimensions measured in different units. |
+| `history` | `string` |  |  Default: `336h`. |
+| `name` | `string` | yes | Name identifies the signal in status and metrics. Must be unique within the scaler. |
+| `prometheus` | `object` | yes | Prometheus reads this signal from a Prometheus-compatible endpoint. |
+| `resolution` | `string` |  |  Default: `5m`. |
+
+### PredictiveScaler.spec.signals.capacity
+
+Capacity converts this signal's units into replicas. Required, because there is no sensible shared default across dimensions measured in different units.
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `perReplica` | int-or-string |  | PerReplica is how many units of the signal one replica serves. If the signal is already expressed in replicas (for example, forecasting allocated GameServers directly), set this to 1. Default: `1`. |
+| `query` | `object` |  | Query optionally derives per-replica capacity from live data instead of a constant, e.g. average capacity across the fleet. Takes precedence over PerReplica when set. |
+
+### PredictiveScaler.spec.signals.capacity.query
+
+Query optionally derives per-replica capacity from live data instead of a constant, e.g. average capacity across the fleet. Takes precedence over PerReplica when set.
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `address` | `string` | yes | Address is the base URL of the query endpoint, e.g. "http://vmselect.monitoring:8481/select/0/prometheus". |
+| `bearerTokenSecretRef` | `object` |  | BearerTokenSecretRef optionally supplies an Authorization bearer token. |
+| `insecureSkipVerify` | `boolean` |  | InsecureSkipVerify disables TLS verification. Not recommended. |
+| `query` | `string` | yes | Query must evaluate to exactly one series. If it returns more than one, the PredictiveScaler goes Degraded rather than silently picking one. |
+
+### PredictiveScaler.spec.signals.capacity.query.bearerTokenSecretRef
+
+BearerTokenSecretRef optionally supplies an Authorization bearer token.
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `key` | `string` | yes |  |
+| `name` | `string` | yes |  |
+
+### PredictiveScaler.spec.signals.prometheus
+
+Prometheus reads this signal from a Prometheus-compatible endpoint.
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `address` | `string` | yes | Address is the base URL of the query endpoint, e.g. "http://vmselect.monitoring:8481/select/0/prometheus". |
+| `bearerTokenSecretRef` | `object` |  | BearerTokenSecretRef optionally supplies an Authorization bearer token. |
+| `insecureSkipVerify` | `boolean` |  | InsecureSkipVerify disables TLS verification. Not recommended. |
+| `query` | `string` | yes | Query must evaluate to exactly one series. If it returns more than one, the PredictiveScaler goes Degraded rather than silently picking one. |
+
+### PredictiveScaler.spec.signals.prometheus.bearerTokenSecretRef
+
+BearerTokenSecretRef optionally supplies an Authorization bearer token.
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `key` | `string` | yes |  |
+| `name` | `string` | yes |  |
+
 ### PredictiveScaler.status
 
 PredictiveScalerStatus is the observed state of a PredictiveScaler.
@@ -261,11 +323,12 @@ PredictiveScalerStatus is the observed state of a PredictiveScaler.
 | `breakdown` | `object` |  | RecommendationBreakdown records how the number was arrived at, so that a surprising replica count can be explained without re-deriving it. |
 | `conditions` | []`object` |  |  |
 | `currentReplicas` | `integer` |  | CurrentReplicas last read from the target. |
-| `lastForecast` | `object` |  | ForecastSample is the forecast evaluated at the lead time. |
+| `lastForecast` | `object` |  | LastForecast describes the binding signal's forecast. |
 | `lastScaleTime` | `string` |  |  |
 | `observedGeneration` | `integer` |  |  |
 | `recommendedReplicas` | `integer` |  | RecommendedReplicas is what presage would apply (and does apply in Enforce mode). |
 | `scaleDownCandidateSince` | `string` |  | ScaleDownCandidateSince tracks the start of the scale-down stabilization window. Cleared whenever the recommendation stops being below current. |
+| `signalStatuses` | []`object` |  | SignalStatuses carries one entry per configured signal, so a multi-signal scaler can be debugged without guessing which dimension produced which number. |
 
 ### PredictiveScaler.status.breakdown
 
@@ -273,7 +336,8 @@ RecommendationBreakdown records how the number was arrived at, so that a surpris
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `constraint` | `string` |  | Constraint names the binding constraint, if any: one of "MinReplicas", "MaxReplicas", "ReactiveFloor", "ScaleDownWindow", "MaxScaleUpRate", "MaxScaleDownRate", or "" when the forecast bound. |
+| `bindingSignal` | `string` |  | BindingSignal names the signal that required the most replicas. With several signals this answers "which dimension is driving the size of this workload", which is the first thing anyone asks. |
+| `constraint` | `string` |  | Constraint names the binding constraint, if any: one of "MinReplicas", "MaxReplicas", "ReactiveFloor", "ForecastUncertainty", "ScaleDownWindow", "MaxScaleUpRate", "MaxScaleDownRate", or "" when the forecast bound. |
 | `predictive` | `integer` | yes | Predictive is the replica count implied by the forecast alone. |
 | `reactive` | `integer` |  | Reactive is the replica count the reactive floor would have chosen. |
 
@@ -292,7 +356,7 @@ Condition contains details for one aspect of the current state of this API Resou
 
 ### PredictiveScaler.status.lastForecast
 
-ForecastSample is the forecast evaluated at the lead time.
+LastForecast describes the binding signal's forecast.
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -302,3 +366,16 @@ ForecastSample is the forecast evaluated at the lead time.
 | `model` | `string` |  | Model identifier reported by the backend, if any. |
 | `point` | `string` | yes | Point is the point forecast at the lead time. |
 | `quantiles` | `object` |  | Quantiles maps quantile to forecast value at the lead time. |
+| `revision` | `string` |  | Revision of the model weights, when the backend pins one. presage does not vendor weights, so recording which revision produced a forecast is the only way to explain a behaviour change that came from the model rather than from configuration. |
+
+### PredictiveScaler.status.signalStatuses
+
+SignalStatus is the per-signal view of one evaluation.
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `forecast` | `string` | yes | Forecast at the lead time, at the target quantile. |
+| `gapSteps` | `integer` |  | GapSteps is how many steps of the query window were gap-filled. |
+| `name` | `string` | yes |  |
+| `observed` | `string` | yes | Observed is the latest sampled value. |
+| `replicas` | `integer` | yes | Replicas this signal alone would have required. |

@@ -47,14 +47,14 @@ var (
 	ForecastValue = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "presage_forecast_value",
 		Help: "Forecast signal value at the lead time, by quantile.",
-	}, []string{"namespace", "name", "quantile"})
+	}, []string{"namespace", "name", "signal", "quantile"})
 
 	// SignalValue is the most recent observed value of the signal, so the
 	// forecast can be scored against it without a second data source.
 	SignalValue = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "presage_signal_value",
 		Help: "Most recent observed value of the signal driving the forecast.",
-	}, []string{"namespace", "name"})
+	}, []string{"namespace", "name", "signal"})
 
 	// LeadTimeSeconds is the horizon actually used.
 	LeadTimeSeconds = prometheus.NewGaugeVec(prometheus.GaugeOpts{
@@ -108,7 +108,7 @@ var (
 	SignalGaps = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "presage_signal_gap_steps",
 		Help: "Number of steps in the last signal query that were gap-filled.",
-	}, []string{"namespace", "name"})
+	}, []string{"namespace", "name", "signal"})
 )
 
 // Forget drops every series for a scaler, so a deleted PredictiveScaler stops
@@ -122,8 +122,8 @@ func Forget(namespace, name, target string) {
 	LeadTimeSeconds.Delete(labels)
 
 	nn := prometheus.Labels{"namespace": namespace, "name": name}
-	SignalValue.Delete(nn)
-	SignalGaps.Delete(nn)
+	SignalValue.DeletePartialMatch(nn)
+	SignalGaps.DeletePartialMatch(nn)
 	ForecastValue.DeletePartialMatch(nn)
 }
 

@@ -71,6 +71,35 @@ type AgonesFleetTarget struct {
 	MaxRecommendationAge *metav1.Duration `json:"maxRecommendationAge,omitempty"`
 }
 
+// NamedSignal is one demand dimension in a multi-signal scaler.
+//
+// Each signal is converted to a replica requirement independently and the
+// largest binds, the way an HPA combines multiple metrics. A workload has to
+// be big enough for every dimension it serves, so summing or averaging them
+// would let a quiet dimension mask a busy one.
+type NamedSignal struct {
+	// Name identifies the signal in status and metrics. Must be unique within
+	// the scaler.
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+
+	// Prometheus reads this signal from a Prometheus-compatible endpoint.
+	Prometheus *PrometheusSignal `json:"prometheus"`
+
+	// +kubebuilder:default="5m"
+	// +optional
+	Resolution *metav1.Duration `json:"resolution,omitempty"`
+
+	// +kubebuilder:default="336h"
+	// +optional
+	History *metav1.Duration `json:"history,omitempty"`
+
+	// Capacity converts this signal's units into replicas. Required, because
+	// there is no sensible shared default across dimensions measured in
+	// different units.
+	Capacity CapacitySpec `json:"capacity"`
+}
+
 // SignalSpec describes the time series that drives the forecast.
 type SignalSpec struct {
 	// Prometheus reads the signal from a Prometheus-compatible range query
@@ -90,7 +119,7 @@ type SignalSpec struct {
 	// History is how much past data to feed the model. Capped by the backend's
 	// maximum context length. Two to four weeks is a reasonable default for
 	// workloads with weekly seasonality.
-	// +kubebuilder:default="14d"
+	// +kubebuilder:default="336h"
 	// +optional
 	History *metav1.Duration `json:"history,omitempty"`
 }
@@ -307,11 +336,25 @@ type ForecastSpec struct {
 // PredictiveScalerSpec defines the desired state of a PredictiveScaler.
 type PredictiveScalerSpec struct {
 	ScaleTargetRef ScaleTargetRef `json:"scaleTargetRef"`
-	Signal         SignalSpec     `json:"signal"`
 	Policy         PolicySpec     `json:"policy"`
+
+	// Signal is the single-signal form, paired with the top-level Capacity.
+	// Exactly one of Signal or Signals must be set.
+	// +optional
+	Signal *SignalSpec `json:"signal,omitempty"`
+
+	// Signals is the multi-signal form. Each entry becomes a replica
+	// requirement and the largest binds, so the workload ends up sized for
+	// whichever dimension needs the most.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	Signals []NamedSignal `json:"signals,omitempty"`
 
 	// +optional
 	LeadTime *LeadTimeSpec `json:"leadTime,omitempty"`
+	// Capacity applies to the single-signal form only; multi-signal scalers
+	// carry a capacity per signal.
 	// +optional
 	Capacity *CapacitySpec `json:"capacity,omitempty"`
 	// +optional
@@ -356,6 +399,20 @@ type ForecastSample struct {
 	Quantiles map[string]string `json:"quantiles,omitempty"`
 }
 
+// SignalStatus is the per-signal view of one evaluation.
+type SignalStatus struct {
+	Name string `json:"name"`
+	// Replicas this signal alone would have required.
+	Replicas int32 `json:"replicas"`
+	// Observed is the latest sampled value.
+	Observed string `json:"observed"`
+	// Forecast at the lead time, at the target quantile.
+	Forecast string `json:"forecast"`
+	// GapSteps is how many steps of the query window were gap-filled.
+	// +optional
+	GapSteps int32 `json:"gapSteps,omitempty"`
+}
+
 // RecommendationBreakdown records how the number was arrived at, so that a
 // surprising replica count can be explained without re-deriving it.
 type RecommendationBreakdown struct {
@@ -365,10 +422,17 @@ type RecommendationBreakdown struct {
 	// +optional
 	Reactive *int32 `json:"reactive,omitempty"`
 	// Constraint names the binding constraint, if any: one of
-	// "MinReplicas", "MaxReplicas", "ReactiveFloor", "ScaleDownWindow",
-	// "MaxScaleUpRate", "MaxScaleDownRate", or "" when the forecast bound.
+	// "MinReplicas", "MaxReplicas", "ReactiveFloor", "ForecastUncertainty",
+	// "ScaleDownWindow", "MaxScaleUpRate", "MaxScaleDownRate", or "" when the
+	// forecast bound.
 	// +optional
 	Constraint string `json:"constraint,omitempty"`
+
+	// BindingSignal names the signal that required the most replicas. With
+	// several signals this answers "which dimension is driving the size of
+	// this workload", which is the first thing anyone asks.
+	// +optional
+	BindingSignal string `json:"bindingSignal,omitempty"`
 }
 
 // PredictiveScalerStatus is the observed state of a PredictiveScaler.
@@ -384,8 +448,17 @@ type PredictiveScalerStatus struct {
 	RecommendedReplicas int32 `json:"recommendedReplicas,omitempty"`
 	// +optional
 	Breakdown *RecommendationBreakdown `json:"breakdown,omitempty"`
+	// LastForecast describes the binding signal's forecast.
 	// +optional
 	LastForecast *ForecastSample `json:"lastForecast,omitempty"`
+
+	// SignalStatuses carries one entry per configured signal, so a
+	// multi-signal scaler can be debugged without guessing which dimension
+	// produced which number.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	SignalStatuses []SignalStatus `json:"signalStatuses,omitempty"`
 	// +optional
 	LastScaleTime *metav1.Time `json:"lastScaleTime,omitempty"`
 	// ScaleDownCandidateSince tracks the start of the scale-down stabilization
@@ -417,6 +490,7 @@ const (
 // +kubebuilder:printcolumn:name="Current",type=integer,JSONPath=`.status.currentReplicas`
 // +kubebuilder:printcolumn:name="Recommended",type=integer,JSONPath=`.status.recommendedReplicas`
 // +kubebuilder:printcolumn:name="Bound",type=string,priority=1,JSONPath=`.status.breakdown.constraint`
+// +kubebuilder:printcolumn:name="Signal",type=string,priority=1,JSONPath=`.status.breakdown.bindingSignal`
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 

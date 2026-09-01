@@ -36,6 +36,10 @@ spec:
       name: Bound
       priority: 1
       type: string
+    - jsonPath: .status.breakdown.bindingSignal
+      name: Signal
+      priority: 1
+      type: string
     - jsonPath: .status.conditions[?(@.type=="Ready")].status
       name: Ready
       type: string
@@ -70,7 +74,9 @@ spec:
             description: PredictiveScalerSpec defines the desired state of a PredictiveScaler.
             properties:
               capacity:
-                description: CapacitySpec converts forecast units into replicas.
+                description: |-
+                  Capacity applies to the single-signal form only; multi-signal scalers
+                  carry a capacity per signal.
                 properties:
                   perReplica:
                     anyOf:
@@ -388,11 +394,12 @@ spec:
                 - name
                 type: object
               signal:
-                description: SignalSpec describes the time series that drives the
-                  forecast.
+                description: |-
+                  Signal is the single-signal form, paired with the top-level Capacity.
+                  Exactly one of Signal or Signals must be set.
                 properties:
                   history:
-                    default: 14d
+                    default: 336h
                     description: |-
                       History is how much past data to feed the model. Capped by the backend's
                       maximum context length. Two to four weeks is a reasonable default for
@@ -447,10 +454,140 @@ spec:
                       weekly seasonality. At 1m you get ~11 days, which does not.
                     type: string
                 type: object
+              signals:
+                description: |-
+                  Signals is the multi-signal form. Each entry becomes a replica
+                  requirement and the largest binds, so the workload ends up sized for
+                  whichever dimension needs the most.
+                items:
+                  description: |-
+                    NamedSignal is one demand dimension in a multi-signal scaler.
+
+                    Each signal is converted to a replica requirement independently and the
+                    largest binds, the way an HPA combines multiple metrics. A workload has to
+                    be big enough for every dimension it serves, so summing or averaging them
+                    would let a quiet dimension mask a busy one.
+                  properties:
+                    capacity:
+                      description: |-
+                        Capacity converts this signal's units into replicas. Required, because
+                        there is no sensible shared default across dimensions measured in
+                        different units.
+                      properties:
+                        perReplica:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          default: "1"
+                          description: |-
+                            PerReplica is how many units of the signal one replica serves. If the
+                            signal is already expressed in replicas (for example, forecasting
+                            allocated GameServers directly), set this to 1.
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        query:
+                          description: |-
+                            Query optionally derives per-replica capacity from live data instead of
+                            a constant, e.g. average capacity across the fleet. Takes precedence
+                            over PerReplica when set.
+                          properties:
+                            address:
+                              description: |-
+                                Address is the base URL of the query endpoint, e.g.
+                                "http://vmselect.monitoring:8481/select/0/prometheus".
+                              minLength: 1
+                              type: string
+                            bearerTokenSecretRef:
+                              description: BearerTokenSecretRef optionally supplies
+                                an Authorization bearer token.
+                              properties:
+                                key:
+                                  minLength: 1
+                                  type: string
+                                name:
+                                  minLength: 1
+                                  type: string
+                              required:
+                              - key
+                              - name
+                              type: object
+                            insecureSkipVerify:
+                              description: InsecureSkipVerify disables TLS verification.
+                                Not recommended.
+                              type: boolean
+                            query:
+                              description: |-
+                                Query must evaluate to exactly one series. If it returns more than one,
+                                the PredictiveScaler goes Degraded rather than silently picking one.
+                              minLength: 1
+                              type: string
+                          required:
+                          - address
+                          - query
+                          type: object
+                      type: object
+                    history:
+                      default: 336h
+                      type: string
+                    name:
+                      description: |-
+                        Name identifies the signal in status and metrics. Must be unique within
+                        the scaler.
+                      minLength: 1
+                      type: string
+                    prometheus:
+                      description: Prometheus reads this signal from a Prometheus-compatible
+                        endpoint.
+                      properties:
+                        address:
+                          description: |-
+                            Address is the base URL of the query endpoint, e.g.
+                            "http://vmselect.monitoring:8481/select/0/prometheus".
+                          minLength: 1
+                          type: string
+                        bearerTokenSecretRef:
+                          description: BearerTokenSecretRef optionally supplies an
+                            Authorization bearer token.
+                          properties:
+                            key:
+                              minLength: 1
+                              type: string
+                            name:
+                              minLength: 1
+                              type: string
+                          required:
+                          - key
+                          - name
+                          type: object
+                        insecureSkipVerify:
+                          description: InsecureSkipVerify disables TLS verification.
+                            Not recommended.
+                          type: boolean
+                        query:
+                          description: |-
+                            Query must evaluate to exactly one series. If it returns more than one,
+                            the PredictiveScaler goes Degraded rather than silently picking one.
+                          minLength: 1
+                          type: string
+                      required:
+                      - address
+                      - query
+                      type: object
+                    resolution:
+                      default: 5m
+                      type: string
+                  required:
+                  - capacity
+                  - name
+                  - prometheus
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
             required:
             - policy
             - scaleTargetRef
-            - signal
             type: object
           status:
             description: PredictiveScalerStatus is the observed state of a PredictiveScaler.
@@ -460,11 +597,18 @@ spec:
                   RecommendationBreakdown records how the number was arrived at, so that a
                   surprising replica count can be explained without re-deriving it.
                 properties:
+                  bindingSignal:
+                    description: |-
+                      BindingSignal names the signal that required the most replicas. With
+                      several signals this answers "which dimension is driving the size of
+                      this workload", which is the first thing anyone asks.
+                    type: string
                   constraint:
                     description: |-
                       Constraint names the binding constraint, if any: one of
-                      "MinReplicas", "MaxReplicas", "ReactiveFloor", "ScaleDownWindow",
-                      "MaxScaleUpRate", "MaxScaleDownRate", or "" when the forecast bound.
+                      "MinReplicas", "MaxReplicas", "ReactiveFloor", "ForecastUncertainty",
+                      "ScaleDownWindow", "MaxScaleUpRate", "MaxScaleDownRate", or "" when the
+                      forecast bound.
                     type: string
                   predictive:
                     description: Predictive is the replica count implied by the forecast
@@ -543,8 +687,7 @@ spec:
                 format: int32
                 type: integer
               lastForecast:
-                description: ForecastSample is the forecast evaluated at the lead
-                  time.
+                description: LastForecast describes the binding signal's forecast.
                 properties:
                   backend:
                     description: Backend that produced it.
@@ -600,6 +743,41 @@ spec:
                   window. Cleared whenever the recommendation stops being below current.
                 format: date-time
                 type: string
+              signalStatuses:
+                description: |-
+                  SignalStatuses carries one entry per configured signal, so a
+                  multi-signal scaler can be debugged without guessing which dimension
+                  produced which number.
+                items:
+                  description: SignalStatus is the per-signal view of one evaluation.
+                  properties:
+                    forecast:
+                      description: Forecast at the lead time, at the target quantile.
+                      type: string
+                    gapSteps:
+                      description: GapSteps is how many steps of the query window
+                        were gap-filled.
+                      format: int32
+                      type: integer
+                    name:
+                      type: string
+                    observed:
+                      description: Observed is the latest sampled value.
+                      type: string
+                    replicas:
+                      description: Replicas this signal alone would have required.
+                      format: int32
+                      type: integer
+                  required:
+                  - forecast
+                  - name
+                  - observed
+                  - replicas
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
             type: object
         type: object
     served: true

@@ -1,6 +1,7 @@
 package policy
 
 import (
+	"errors"
 	"math"
 	"testing"
 	"time"
@@ -24,8 +25,21 @@ func baseConfig() Config {
 }
 
 func baseInput() Input {
-	return Input{Now: epoch, CurrentReplicas: 10, PerReplica: 10}
+	return Input{
+		Now:             epoch,
+		CurrentReplicas: 10,
+		Signals:         []Signal{{Name: "demand", PerReplica: 10}},
+	}
 }
+
+// down/up set the lower and upper forecast quantiles of the first signal.
+func setForecast(in *Input, down, up float64) {
+	in.Signals[0].ForecastDown = down
+	in.Signals[0].ForecastUp = up
+}
+
+func setDemand(in *Input, v float64)     { in.Signals[0].CurrentDemand = v }
+func setPerReplica(in *Input, v float64) { in.Signals[0].PerReplica = v }
 
 // TestEvaluate_UncertaintyBuysCapacityNotInaction pins the central design
 // decision. An earlier revision put a dead band between the lower and upper
@@ -37,10 +51,10 @@ func TestEvaluate_UncertaintyBuysCapacityNotInaction(t *testing.T) {
 	cfg := baseConfig()
 
 	confident := baseInput()
-	confident.ForecastDown, confident.ForecastUp = 100, 110
+	setForecast(&confident, 100, 110)
 
 	uncertain := baseInput()
-	uncertain.ForecastDown, uncertain.ForecastUp = 100, 180
+	setForecast(&uncertain, 100, 180)
 
 	a, err := Evaluate(cfg, confident)
 	if err != nil {
@@ -71,7 +85,7 @@ func TestEvaluate_UncertaintyGuardBlocksScaleDown(t *testing.T) {
 	in := baseInput()
 	// Target says 6 replicas (down from 10), but the p50->p90 spread is
 	// 60% -- far too wide to justify giving capacity back.
-	in.ForecastDown, in.ForecastUp = 37.5, 60
+	setForecast(&in, 37.5, 60)
 
 	got, err := Evaluate(cfg, in)
 	if err != nil {
@@ -88,7 +102,7 @@ func TestEvaluate_UncertaintyGuardBlocksScaleDown(t *testing.T) {
 	}
 
 	// Same target, but a confident forecast: the scale-down goes through.
-	in.ForecastDown, in.ForecastUp = 55, 60
+	setForecast(&in, 55, 60)
 	got, err = Evaluate(cfg, in)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -105,7 +119,7 @@ func TestEvaluate_UncertaintyGuardNeverBlocksScaleUp(t *testing.T) {
 	cfg.ScaleDownMaxRelativeSpread = 0.01 // effectively always "uncertain"
 
 	in := baseInput()
-	in.ForecastDown, in.ForecastUp = 50, 300
+	setForecast(&in, 50, 300)
 
 	got, err := Evaluate(cfg, in)
 	if err != nil {
@@ -120,7 +134,7 @@ func TestEvaluate_ScalesUpOnUpperQuantile(t *testing.T) {
 	cfg := baseConfig()
 	in := baseInput()
 	// p90 -> 15 replicas, above current 10.
-	in.ForecastDown, in.ForecastUp = 90, 150
+	setForecast(&in, 90, 150)
 
 	got, err := Evaluate(cfg, in)
 	if err != nil {
@@ -139,7 +153,7 @@ func TestEvaluate_ScaleUpIsNeverDelayed(t *testing.T) {
 	cfg := baseConfig()
 	cfg.ScaleDownWindow = time.Hour
 	in := baseInput()
-	in.ForecastDown, in.ForecastUp = 90, 200
+	setForecast(&in, 90, 200)
 
 	got, err := Evaluate(cfg, in)
 	if err != nil {
@@ -154,7 +168,7 @@ func TestEvaluate_ScaleDownHeldUntilWindowElapses(t *testing.T) {
 	cfg := baseConfig()
 	cfg.ScaleDownWindow = 15 * time.Minute
 	in := baseInput()
-	in.ForecastDown, in.ForecastUp = 55, 60 // target 6, well below current 10
+	setForecast(&in, 55, 60) // target 6, well below current 10
 
 	// First evaluation: becomes a candidate, holds.
 	first, err := Evaluate(cfg, in)
@@ -191,7 +205,7 @@ func TestEvaluate_ScaleDownCandidateResetsWhenDemandRecovers(t *testing.T) {
 	cfg := baseConfig()
 	cfg.ScaleDownWindow = 15 * time.Minute
 	in := baseInput()
-	in.ForecastDown, in.ForecastUp = 55, 60
+	setForecast(&in, 55, 60)
 
 	first, _ := Evaluate(cfg, in)
 	if first.ScaleDownCandidateSince == nil {
@@ -203,7 +217,7 @@ func TestEvaluate_ScaleDownCandidateResetsWhenDemandRecovers(t *testing.T) {
 	// on the strength of intermittent dips.
 	in.ScaleDownCandidateSince = first.ScaleDownCandidateSince
 	in.Now = epoch.Add(10 * time.Minute)
-	in.ForecastDown, in.ForecastUp = 100, 140
+	setForecast(&in, 100, 140)
 	recovered, _ := Evaluate(cfg, in)
 	if recovered.ScaleDownCandidateSince != nil {
 		t.Fatalf("expected candidate tracker to clear, got %v", recovered.ScaleDownCandidateSince)
@@ -217,8 +231,8 @@ func TestEvaluate_ReactiveFloorPreventsUnderProvisioning(t *testing.T) {
 	cfg := baseConfig()
 	cfg.ReactiveFloor = &ReactiveFloor{Buffer: Amount{Value: 2}}
 	in := baseInput()
-	in.CurrentDemand = 200                  // 20 replicas' worth of demand, right now
-	in.ForecastDown, in.ForecastUp = 10, 20 // forecast says demand is about to vanish
+	setDemand(&in, 200)      // 20 replicas' worth of demand, right now
+	setForecast(&in, 10, 20) // forecast says demand is about to vanish
 
 	got, err := Evaluate(cfg, in)
 	if err != nil {
@@ -239,8 +253,8 @@ func TestEvaluate_ReactiveFloorPercentBuffer(t *testing.T) {
 	cfg := baseConfig()
 	cfg.ReactiveFloor = &ReactiveFloor{Buffer: Amount{Value: 25, Percent: true}}
 	in := baseInput()
-	in.CurrentDemand = 100 // 10 replicas + 25% = 13
-	in.ForecastDown, in.ForecastUp = 0, 0
+	setDemand(&in, 100) // 10 replicas + 25% = 13
+	setForecast(&in, 0, 0)
 
 	got, _ := Evaluate(cfg, in)
 	if got.Replicas != 13 {
@@ -255,8 +269,8 @@ func TestEvaluate_MaxReplicasOverridesReactiveFloor(t *testing.T) {
 	cfg.MaxReplicas = 15
 	cfg.ReactiveFloor = &ReactiveFloor{Buffer: Amount{Value: 2}}
 	in := baseInput()
-	in.CurrentDemand = 200
-	in.ForecastDown, in.ForecastUp = 10, 20
+	setDemand(&in, 200)
+	setForecast(&in, 10, 20)
 
 	got, _ := Evaluate(cfg, in)
 	if got.Replicas != 15 {
@@ -286,7 +300,7 @@ func TestEvaluate_RateLimits(t *testing.T) {
 			cfg.MaxScaleUpRate, cfg.MaxScaleDownRate = tt.up, tt.down
 			in := baseInput()
 			in.CurrentReplicas = tt.current
-			in.ForecastUp, in.ForecastDown = tt.fUp, tt.fDown
+			setForecast(&in, tt.fDown, tt.fUp)
 
 			got, err := Evaluate(cfg, in)
 			if err != nil {
@@ -310,7 +324,7 @@ func TestEvaluate_PercentRateDoesNotDeadlockAtZero(t *testing.T) {
 	cfg.MaxScaleUpRate = Amount{Value: 100, Percent: true}
 	in := baseInput()
 	in.CurrentReplicas = 0
-	in.ForecastDown, in.ForecastUp = 50, 100
+	setForecast(&in, 50, 100)
 
 	got, err := Evaluate(cfg, in)
 	if err != nil {
@@ -325,7 +339,7 @@ func TestEvaluate_Headroom(t *testing.T) {
 	cfg := baseConfig()
 	cfg.Headroom = Amount{Value: 20, Percent: true}
 	in := baseInput()
-	in.ForecastDown, in.ForecastUp = 100, 100 // 100 * 1.2 / 10 = 12
+	setForecast(&in, 100, 100) // 100 * 1.2 / 10 = 12
 
 	got, _ := Evaluate(cfg, in)
 	if got.Replicas != 12 {
@@ -337,7 +351,8 @@ func TestEvaluate_QuantileCrossingIsCorrected(t *testing.T) {
 	// A backend that emits crossed quantiles must not invert up/down handling.
 	cfg := baseConfig()
 	in := baseInput()
-	in.ForecastUp, in.ForecastDown = 50, 150 // crossed on purpose
+	// Deliberately crossed: up=50 is below down=150.
+	setForecast(&in, 150, 50)
 
 	got, err := Evaluate(cfg, in)
 	if err != nil {
@@ -353,7 +368,7 @@ func TestEvaluate_NegativeForecastClampedToZero(t *testing.T) {
 	cfg.MinReplicas = 0
 	in := baseInput()
 	in.CurrentReplicas = 5
-	in.ForecastUp, in.ForecastDown = -10, -50
+	setForecast(&in, -50, -10)
 
 	got, err := Evaluate(cfg, in)
 	if err != nil {
@@ -371,10 +386,10 @@ func TestEvaluate_InvalidInputs(t *testing.T) {
 		in   func(Input) Input
 		want error
 	}{
-		{"zero capacity", nil, func(i Input) Input { i.PerReplica = 0; return i }, ErrInvalidCapacity},
-		{"NaN capacity", nil, func(i Input) Input { i.PerReplica = math.NaN(); return i }, ErrInvalidCapacity},
-		{"NaN forecast", nil, func(i Input) Input { i.ForecastUp = math.NaN(); return i }, ErrInvalidForecast},
-		{"Inf forecast", nil, func(i Input) Input { i.ForecastDown = math.Inf(1); return i }, ErrInvalidForecast},
+		{"zero capacity", nil, func(i Input) Input { i.Signals[0].PerReplica = 0; return i }, ErrInvalidCapacity},
+		{"NaN capacity", nil, func(i Input) Input { i.Signals[0].PerReplica = math.NaN(); return i }, ErrInvalidCapacity},
+		{"NaN forecast", nil, func(i Input) Input { i.Signals[0].ForecastUp = math.NaN(); return i }, ErrInvalidForecast},
+		{"Inf forecast", nil, func(i Input) Input { i.Signals[0].ForecastDown = math.Inf(1); return i }, ErrInvalidForecast},
 		{"max below min", func(c Config) Config { c.MinReplicas, c.MaxReplicas = 10, 5; return c }, nil, ErrInvalidBounds},
 		{"zero max", func(c Config) Config { c.MaxReplicas = 0; return c }, nil, ErrInvalidBounds},
 	}
@@ -387,7 +402,7 @@ func TestEvaluate_InvalidInputs(t *testing.T) {
 			if tt.in != nil {
 				in = tt.in(in)
 			}
-			if _, err := Evaluate(cfg, in); err != tt.want {
+			if _, err := Evaluate(cfg, in); !errors.Is(err, tt.want) {
 				t.Fatalf("want %v, got %v", tt.want, err)
 			}
 		})
@@ -415,14 +430,14 @@ func TestEvaluate_ReactiveFloorIsNeverUnderReactive(t *testing.T) {
 				for _, current := range []int32{0, 1, 10, 100} {
 					in := baseInput()
 					in.CurrentReplicas = current
-					in.CurrentDemand = demand
-					in.ForecastUp, in.ForecastDown = fUp, fDown
+					setDemand(&in, demand)
+					setForecast(&in, fDown, fUp)
 
 					got, err := Evaluate(cfg, in)
 					if err != nil {
 						t.Fatalf("unexpected error: %v", err)
 					}
-					wantFloor := int32(math.Ceil(demand/in.PerReplica)) + 2
+					wantFloor := int32(math.Ceil(demand/in.Signals[0].PerReplica)) + 2
 					if got.Replicas < wantFloor {
 						t.Fatalf("floor violated: demand=%v up=%v down=%v current=%d -> %d, want >= %d (%s)",
 							demand, fUp, fDown, current, got.Replicas, wantFloor, got.Explain)
@@ -431,4 +446,111 @@ func TestEvaluate_ReactiveFloorIsNeverUnderReactive(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestEvaluate_LargestSignalBinds: a workload must be big enough for every
+// dimension, so the binding one is whichever needs the most. Averaging or
+// summing instead would let a quiet dimension mask a busy one.
+func TestEvaluate_LargestSignalBinds(t *testing.T) {
+	cfg := baseConfig()
+	in := baseInput()
+	in.Signals = []Signal{
+		{Name: "players", PerReplica: 10, ForecastUp: 60, ForecastDown: 60}, // 6 replicas
+		{Name: "cpu", PerReplica: 0.5, ForecastUp: 7, ForecastDown: 7},      // 14 replicas
+		{Name: "rooms", PerReplica: 4, ForecastUp: 20, ForecastDown: 20},    // 5 replicas
+	}
+
+	got, err := Evaluate(cfg, in)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Replicas != 14 {
+		t.Fatalf("want 14 (the largest requirement), got %d (%s)", got.Replicas, got.Explain)
+	}
+	// "Which dimension is driving the size of this workload" is the first
+	// question anyone asks, so the answer is reported rather than inferred.
+	if got.BindingSignal != "cpu" {
+		t.Fatalf("want binding signal %q, got %q", "cpu", got.BindingSignal)
+	}
+}
+
+// TestEvaluate_ReactiveFloorTakesTheMaxAcrossSignals: the floor has to cover
+// every dimension too, or a busy signal could be starved by a quiet one.
+func TestEvaluate_ReactiveFloorTakesTheMaxAcrossSignals(t *testing.T) {
+	cfg := baseConfig()
+	cfg.ReactiveFloor = &ReactiveFloor{Buffer: Amount{Value: 1}}
+	in := baseInput()
+	in.Signals = []Signal{
+		{Name: "quiet", PerReplica: 10, CurrentDemand: 10, ForecastUp: 0, ForecastDown: 0},
+		{Name: "busy", PerReplica: 10, CurrentDemand: 250, ForecastUp: 0, ForecastDown: 0},
+	}
+
+	got, err := Evaluate(cfg, in)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Replicas != 26 { // ceil(250/10) + 1
+		t.Fatalf("want 26 from the busy signal's floor, got %d (%s)", got.Replicas, got.Explain)
+	}
+	if got.Constraint != ConstraintReactiveFloor {
+		t.Fatalf("want ReactiveFloor, got %q", got.Constraint)
+	}
+}
+
+// TestEvaluate_UncertaintyGuardUsesTheBindingSignal: the confidence check must
+// read the forecast that actually set the target, not an unrelated one.
+func TestEvaluate_UncertaintyGuardUsesTheBindingSignal(t *testing.T) {
+	cfg := baseConfig()
+	cfg.ScaleDownMaxRelativeSpread = 0.25
+	in := baseInput()
+	in.Signals = []Signal{
+		// Binding (6 replicas), and very uncertain.
+		{Name: "binding", PerReplica: 10, ForecastUp: 60, ForecastDown: 20},
+		// Smaller and confident; must not be what the guard measures.
+		{Name: "other", PerReplica: 10, ForecastUp: 20, ForecastDown: 19.5},
+	}
+
+	got, err := Evaluate(cfg, in)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Constraint != ConstraintForecastUncertain {
+		t.Fatalf("the guard should have read the binding signal's spread, got %q (%s)",
+			got.Constraint, got.Explain)
+	}
+	if got.Replicas != 10 {
+		t.Fatalf("want a held scale-down at 10, got %d", got.Replicas)
+	}
+}
+
+func TestEvaluate_NoSignals(t *testing.T) {
+	in := baseInput()
+	in.Signals = nil
+	if _, err := Evaluate(baseConfig(), in); !errors.Is(err, ErrNoSignals) {
+		t.Fatalf("want ErrNoSignals, got %v", err)
+	}
+}
+
+func TestEvaluate_BadSignalNamesItself(t *testing.T) {
+	in := baseInput()
+	in.Signals = []Signal{
+		{Name: "good", PerReplica: 10, ForecastUp: 50, ForecastDown: 50},
+		{Name: "broken", PerReplica: 0, ForecastUp: 50, ForecastDown: 50},
+	}
+	_, err := Evaluate(baseConfig(), in)
+	if err == nil || !errors.Is(err, ErrInvalidCapacity) {
+		t.Fatalf("want ErrInvalidCapacity, got %v", err)
+	}
+	if !contains(err.Error(), "broken") {
+		t.Fatalf("the error should name the offending signal, got %q", err)
+	}
+}
+
+func contains(haystack, needle string) bool {
+	for i := 0; i+len(needle) <= len(haystack); i++ {
+		if haystack[i:i+len(needle)] == needle {
+			return true
+		}
+	}
+	return false
 }

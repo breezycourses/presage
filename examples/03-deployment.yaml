@@ -21,7 +21,7 @@ spec:
       address: http://prometheus-operated.monitoring:9090
       query: sum(rate(http_requests_total{app="api"}[5m]))
     resolution: 5m
-    history: 14d
+    history: 336h   # 14 days; Go durations have no day unit
 
   leadTime:
     source: Static
