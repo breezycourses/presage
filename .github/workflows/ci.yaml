@@ -2,6 +2,9 @@ name: ci
 on:
   push: {branches: [main]}
   pull_request:
+  schedule:
+    # Weekly, so an upstream CVE surfaces without waiting for a pull request.
+    - cron: '0 6 * * 1'
 
 jobs:
   go:
@@ -17,6 +20,23 @@ jobs:
             echo "gofmt needed:"; gofmt -l ./api ./cmd ./internal; exit 1;
           }
       - run: go test ./... -race -cover
+
+  vuln:
+    # Bumping a dependency once patches a point in time; this is what keeps it
+    # patched. It runs on pull requests so vulnerable code is not merged, and
+    # weekly so a CVE disclosed upstream surfaces without waiting for someone
+    # to happen to open a PR.
+    #
+    # A newly disclosed upstream CVE will fail unrelated pull requests. That is
+    # intended: the alternative is finding out from a registry scan after
+    # release, which is how this check came to exist.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: {go-version: 'stable', cache: true}
+      - run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - run: govulncheck ./...
 
   generated:
     # Generated manifests drifting from the Go types is a silent correctness

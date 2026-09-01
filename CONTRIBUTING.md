@@ -71,6 +71,17 @@ changes what happens to someone's production workload when presage is wrong.
 permanent surface area. `v1alpha1` gives us room to change our minds, but not
 an excuse to add things speculatively.
 
+## Dependencies
+
+`govulncheck` runs on every pull request and weekly. A newly disclosed upstream
+CVE will fail pull requests that did not cause it — that is deliberate. The
+alternative is finding out from a registry scan after release, which is how
+this check came to exist.
+
+Dependabot groups the `golang.org/x/*` modules into one pull request, because
+they constrain each other's versions and splitting them produces PRs that
+cannot merge independently.
+
 ## Pull requests
 
 * Branch from `main`. One logical change per PR.
