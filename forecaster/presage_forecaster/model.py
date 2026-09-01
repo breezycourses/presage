@@ -70,6 +70,10 @@ class TimesFMModel:
     def name(self) -> str:
         return self._cfg.model
 
+    @property
+    def revision(self) -> str | None:
+        return self._cfg.model_revision
+
     def load(self) -> None:
         """Load and compile the model. Safe to call once, at startup."""
         cfg = self._cfg
@@ -79,9 +83,12 @@ class TimesFMModel:
 
             torch.set_float32_matmul_precision("high")
 
-            log.info("loading %s", cfg.model)
+            log.info("loading %s (revision=%s)", cfg.model, cfg.model_revision or "main")
             started = time.monotonic()
-            model = timesfm.TimesFM_2p5_200M_torch.from_pretrained(cfg.model)
+            kwargs = {}
+            if cfg.model_revision:
+                kwargs["revision"] = cfg.model_revision
+            model = timesfm.TimesFM_2p5_200M_torch.from_pretrained(cfg.model, **kwargs)
 
             log.info(
                 "compiling (max_context=%d, max_horizon=%d, quantile_head=%s)",

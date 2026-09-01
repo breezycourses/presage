@@ -52,6 +52,7 @@ type timesfmForecast struct {
 
 type timesfmResponse struct {
 	Model     string            `json:"model"`
+	Revision  string            `json:"revision"`
 	LatencyMS float64           `json:"latency_ms"`
 	Forecasts []timesfmForecast `json:"forecasts"`
 	Error     string            `json:"error"`
@@ -150,6 +151,7 @@ func (t *TimesFM) Forecast(ctx context.Context, req Request) (*Result, error) {
 		Quantiles: quantiles,
 		Backend:   t.Name(),
 		Model:     out.Model,
+		Revision:  out.Revision,
 		Latency:   time.Duration(out.LatencyMS * float64(time.Millisecond)),
 	}, nil
 }

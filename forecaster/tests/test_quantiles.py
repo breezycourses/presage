@@ -69,3 +69,23 @@ def test_quantile_key_formatting_is_stable():
     assert _format_quantile(0.9) == "0.9"
     assert _format_quantile(0.5) == "0.5"
     assert _format_quantile(0.95) == "0.95"
+
+
+def test_default_revision_is_pinned():
+    """An unpinned model means the weights can change under a running cluster
+    with no signal. The default must be a concrete revision."""
+    from presage_forecaster.config import Config
+
+    cfg = Config()
+    assert cfg.model_revision, "the default checkpoint revision must be pinned"
+    assert len(cfg.model_revision) == 40, "expected a full git SHA"
+
+
+def test_revision_can_be_unpinned_deliberately(monkeypatch):
+    from presage_forecaster.config import Config
+
+    monkeypatch.setenv("PRESAGE_MODEL_REVISION", "main")
+    assert Config.from_env().model_revision is None
+
+    monkeypatch.setenv("PRESAGE_MODEL_REVISION", "abc123")
+    assert Config.from_env().model_revision == "abc123"
