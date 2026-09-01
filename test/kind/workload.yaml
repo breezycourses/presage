@@ -1,0 +1,68 @@
+# The workload under test. `pause` because this suite measures scheduling and
+# scaling, not application behaviour -- a heavier image would only add pull
+# time and flakiness.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sample
+  namespace: presage-e2e
+spec:
+  replicas: 2
+  selector: {matchLabels: {app: sample}}
+  template:
+    metadata: {labels: {app: sample}}
+    spec:
+      terminationGracePeriodSeconds: 0
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          resources:
+            requests: {cpu: 5m, memory: 16Mi}
+---
+apiVersion: scaling.presage.sh/v1alpha1
+kind: ForecastBackend
+metadata:
+  name: default
+spec:
+  type: SeasonalNaive
+  seasonalNaive:
+    season: 1h
+    cycles: 2
+---
+apiVersion: scaling.presage.sh/v1alpha1
+kind: PredictiveScaler
+metadata:
+  name: sample
+  namespace: presage-e2e
+spec:
+  mode: Enforce
+  interval: 5s
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: sample
+  signal:
+    prometheus:
+      address: http://fake-metrics.presage-e2e:9090
+      query: sum(demand)
+    resolution: 1m
+    history: 3h
+  leadTime:
+    source: Static
+    static: 30s
+  capacity:
+    perReplica: "50"
+  forecast:
+    backendRef: default
+  policy:
+    minReplicas: 1
+    maxReplicas: 20
+    targetQuantile: "0.9"
+    headroom: "0"
+    reactiveFloor:
+      enabled: true
+      bufferSize: 0
+    stabilization:
+      scaleDownWindow: 10s
+      maxScaleUpRate: "1000%"
+      maxScaleDownRate: "1000%"
