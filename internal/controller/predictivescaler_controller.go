@@ -258,6 +258,7 @@ func (r *PredictiveScalerReconciler) evaluate(ctx context.Context, ps *v1alpha1.
 			GeneratedAt:     metav1.NewTime(now),
 			Backend:         result.Backend,
 			Model:           result.Model,
+			Revision:        result.Revision,
 			LeadTimeSeconds: int32(leadTime.Seconds()), //nolint:gosec // clamped above
 			Point:           fmt.Sprintf("%.3f", point),
 			Quantiles: map[string]string{

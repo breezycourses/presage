@@ -61,6 +61,10 @@ class ForecastOut(BaseModel):
 
 class ForecastResponse(BaseModel):
     model: str
+    # Which weights produced this. Reported on every response rather than only
+    # on /v1/model, so a recorded forecast carries its own provenance and a
+    # mid-flight model swap is visible after the fact.
+    revision: str | None = None
     latency_ms: float
     forecasts: list[ForecastOut]
 
@@ -117,6 +121,7 @@ def create_app(cfg: Config | None = None, model: TimesFMModel | None = None) -> 
     def model_info() -> dict[str, object]:
         return {
             "model": cfg.model,
+            "revision": cfg.model_revision,
             "ready": model.ready,
             "max_context": cfg.max_context,
             "max_horizon": cfg.max_horizon,
@@ -157,6 +162,7 @@ def create_app(cfg: Config | None = None, model: TimesFMModel | None = None) -> 
         latency_ms = (time.monotonic() - started) * 1000.0
         payload = ForecastResponse(
             model=cfg.model,
+            revision=cfg.model_revision,
             latency_ms=latency_ms,
             forecasts=[
                 ForecastOut(id=s.id, point=r.point, quantiles=r.quantiles)

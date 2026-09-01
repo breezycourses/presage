@@ -1,0 +1,134 @@
+# Default values for presage.
+
+nameOverride: ""
+fullnameOverride: ""
+
+controller:
+  replicaCount: 2
+  image:
+    repository: ghcr.io/growlyx/presage
+    # Defaults to the chart's appVersion.
+    tag: ""
+    pullPolicy: IfNotPresent
+
+  # Only the leader reconciles. The webhook is still served by every replica --
+  # see `agonesWebhook` below for why that is deliberate.
+  leaderElection: true
+
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {memory: 256Mi}
+
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  topologySpreadConstraints: []
+
+  # Extra args appended to the manager command.
+  extraArgs: []
+
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities: {drop: ["ALL"]}
+  podSecurityContext:
+    runAsNonRoot: true
+    seccompProfile: {type: RuntimeDefault}
+
+agonesWebhook:
+  # Serve the Agones FleetAutoscaler webhook. Harmless to leave on when Agones
+  # is not installed: nothing calls it.
+  enabled: true
+  port: 8000
+  # How stale a cached recommendation may be before the webhook errors so that
+  # an Agones Chain policy falls through to its fallback.
+  maxRecommendationAge: 5m
+  service:
+    type: ClusterIP
+    annotations: {}
+  tls:
+    # Agones speaks plain HTTP to service-based webhooks by default. Set these
+    # to serve HTTPS; both must be provided together.
+    enabled: false
+    secretName: ""
+
+forecaster:
+  # The TimesFM model server. Off by default: a ForecastBackend of type
+  # SeasonalNaive runs in-process and needs none of this, and it is the right
+  # place to start anyway -- it is the baseline a foundation model has to beat
+  # before it earns a node.
+  enabled: false
+  replicaCount: 1
+  image:
+    repository: ghcr.io/growlyx/presage-forecaster
+    tag: ""
+    pullPolicy: IfNotPresent
+
+  model: google/timesfm-2.5-200m-pytorch
+  # Pinned by default: an unpinned checkpoint can change under a running
+  # cluster with no signal. Set to "main" to track upstream deliberately.
+  modelRevision: "1d952420fba87f3c6dee4f240de0f1a0fbc790e3"
+
+  # Compiled at startup and fixed for the process lifetime. Context is counted
+  # in points, so the signal resolution decides how far back the model sees:
+  # 4096 points at 5m is about 14 days.
+  maxContext: 4096
+  maxHorizon: 64
+  useQuantileHead: true
+
+  resources:
+    requests: {cpu: "1", memory: 3Gi}
+    limits: {memory: 6Gi}
+
+  # Checkpoint cache. An emptyDir re-downloads about 1GB on every restart;
+  # a PVC avoids that.
+  cache:
+    persistence:
+      enabled: false
+      size: 4Gi
+      storageClass: ""
+    emptyDirSizeLimit: 4Gi
+
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+rbac:
+  create: true
+  # presage reads Agones Fleets. Set false on clusters without Agones to keep
+  # the ClusterRole free of rules for a group that does not exist.
+  agones: true
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+metrics:
+  enabled: true
+  port: 8080
+  service:
+    annotations: {}
+  # Prometheus Operator ServiceMonitor.
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    labels: {}
+  # VictoriaMetrics Operator VMServiceScrape.
+  vmServiceScrape:
+    enabled: false
+    interval: 30s
+    labels: {}
+
+# Install the CRDs. Helm installs files under crds/ automatically but never
+# upgrades them, so a chart upgrade will not pick up CRD changes. Disable this
+# and apply config/crd yourself if you want to manage their lifecycle.
+crds:
+  install: true
+
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1

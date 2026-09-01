@@ -1,0 +1,39 @@
+presage {{ .Chart.AppVersion }} is installed in namespace {{ .Release.Namespace }}.
+
+Nothing is being autoscaled yet. Two objects are needed:
+
+1. A ForecastBackend. Start with the in-process baseline -- it needs no model
+   server, and it is the number a foundation model has to beat before it earns
+   a node:
+
+     kubectl apply -f - <<'YAML'
+     apiVersion: scaling.presage.sh/v1alpha1
+     kind: ForecastBackend
+     metadata:
+       name: default
+     spec:
+       type: SeasonalNaive
+       seasonalNaive:
+         season: 168h
+         cycles: 3
+     YAML
+
+2. A PredictiveScaler for a workload. See:
+     https://github.com/GrowlyX/presage/tree/main/examples
+
+Every PredictiveScaler defaults to mode: Shadow, which publishes a
+recommendation and changes nothing. Compare it against reality first:
+
+  kubectl get predictivescalers -A
+  # presage_recommended_replicas  vs  presage_current_replicas
+
+{{ if not .Values.forecaster.enabled -}}
+The TimesFM forecaster is disabled. Enable it with --set forecaster.enabled=true
+once the baseline has given you a number to beat.
+{{- end }}
+{{ if .Values.agonesWebhook.enabled -}}
+Agones users: point a FleetAutoscaler Chain policy at
+  {{ include "presage.fullname" . }}-webhook.{{ .Release.Namespace }}:{{ .Values.agonesWebhook.port }}
+with a Buffer policy after it, so a presage outage degrades to buffer
+autoscaling instead of freezing the fleet.
+{{- end }}
