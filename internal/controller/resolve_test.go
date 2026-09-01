@@ -6,7 +6,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/util/intstr"
 
-	"github.com/GrowlyX/presage/internal/policy"
+	"github.com/breezycourses/presage/internal/policy"
 )
 
 func TestParseAmount(t *testing.T) {

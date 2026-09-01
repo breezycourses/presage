@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 VERSION ?= dev
-IMG ?= ghcr.io/growlyx/presage:$(VERSION)
-FORECASTER_IMG ?= ghcr.io/growlyx/presage-forecaster:$(VERSION)
+IMG ?= ghcr.io/breezycourses/presage:$(VERSION)
+FORECASTER_IMG ?= ghcr.io/breezycourses/presage-forecaster:$(VERSION)
 CONTROLLER_GEN ?= $(shell go env GOPATH)/bin/controller-gen
 
 .PHONY: help

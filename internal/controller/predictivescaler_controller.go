@@ -19,13 +19,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	"github.com/GrowlyX/presage/api/v1alpha1"
-	"github.com/GrowlyX/presage/internal/agones"
-	"github.com/GrowlyX/presage/internal/forecast"
-	"github.com/GrowlyX/presage/internal/metrics"
-	"github.com/GrowlyX/presage/internal/obs"
-	"github.com/GrowlyX/presage/internal/policy"
-	"github.com/GrowlyX/presage/internal/scaletarget"
+	"github.com/breezycourses/presage/api/v1alpha1"
+	"github.com/breezycourses/presage/internal/agones"
+	"github.com/breezycourses/presage/internal/forecast"
+	"github.com/breezycourses/presage/internal/metrics"
+	"github.com/breezycourses/presage/internal/obs"
+	"github.com/breezycourses/presage/internal/policy"
+	"github.com/breezycourses/presage/internal/scaletarget"
 )
 
 // finalizer lets the reconciler clean up out-of-cluster state -- the Agones

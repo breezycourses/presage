@@ -17,10 +17,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/GrowlyX/presage/internal/backtest"
-	"github.com/GrowlyX/presage/internal/forecast"
-	"github.com/GrowlyX/presage/internal/metrics"
-	"github.com/GrowlyX/presage/internal/policy"
+	"github.com/breezycourses/presage/internal/backtest"
+	"github.com/breezycourses/presage/internal/forecast"
+	"github.com/breezycourses/presage/internal/metrics"
+	"github.com/breezycourses/presage/internal/policy"
 )
 
 func main() {

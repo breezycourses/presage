@@ -185,6 +185,43 @@ def _():
         )
 
 
+@check("chart version and appVersion agree")
+def _():
+    # The release workflow refuses to publish when these disagree with the tag.
+    # Catching it here means finding out at review time rather than from a
+    # failed release.
+    chart = yaml.safe_load((CHART / "Chart.yaml").read_text())
+    assert chart["version"] == chart["appVersion"], (
+        f'version {chart["version"]} != appVersion {chart["appVersion"]}; '
+        "one project, one number"
+    )
+
+
+@check("images point at the published registry")
+def _():
+    docs = render(**{"forecaster.enabled": "true"})
+    for dep in by_kind(docs, "Deployment"):
+        for c in dep["spec"]["template"]["spec"]["containers"]:
+            assert c["image"].startswith("ghcr.io/breezycourses/"), (
+                f"{dep['metadata']['name']} uses {c['image']!r}, which is not a "
+                "registry this project publishes to"
+            )
+
+
+@check("Artifact Hub metadata is present and parseable")
+def _():
+    meta = yaml.safe_load((ROOT / "artifacthub-repo.yml").read_text())
+    assert "repositoryID" in meta, "artifacthub-repo.yml needs a repositoryID key"
+    assert meta.get("owners"), "artifacthub-repo.yml needs at least one owner"
+
+
+@check("the chart declares an icon")
+def _():
+    # Artifact Hub renders it on the listing, and helm lint warns without one.
+    chart = yaml.safe_load((CHART / "Chart.yaml").read_text())
+    assert chart.get("icon", "").startswith("http"), "Chart.yaml needs an icon URL"
+
+
 def main() -> int:
     failures = 0
     for name, fn in CHECKS:

@@ -3,7 +3,7 @@
 ## Reporting a vulnerability
 
 Report security issues privately through
-[GitHub Security Advisories](https://github.com/GrowlyX/presage/security/advisories/new).
+[GitHub Security Advisories](https://github.com/breezycourses/presage/security/advisories/new).
 Do not open a public issue for a suspected vulnerability.
 
 Please include the presage version, the Kubernetes version, whether the

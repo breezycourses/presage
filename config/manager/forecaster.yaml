@@ -20,7 +20,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: forecaster
-          image: ghcr.io/growlyx/presage-forecaster:dev
+          image: ghcr.io/breezycourses/presage-forecaster:dev
           env:
             - {name: PRESAGE_MODEL, value: "google/timesfm-2.5-200m-pytorch"}
             # 4096 points at 5m resolution is ~14 days of context.

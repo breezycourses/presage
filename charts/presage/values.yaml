@@ -6,7 +6,7 @@ fullnameOverride: ""
 controller:
   replicaCount: 2
   image:
-    repository: ghcr.io/growlyx/presage
+    repository: ghcr.io/breezycourses/presage
     # Defaults to the chart's appVersion.
     tag: ""
     pullPolicy: IfNotPresent
@@ -62,7 +62,7 @@ forecaster:
   enabled: false
   replicaCount: 1
   image:
-    repository: ghcr.io/growlyx/presage-forecaster
+    repository: ghcr.io/breezycourses/presage-forecaster
     tag: ""
     pullPolicy: IfNotPresent
 

@@ -19,10 +19,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
-	"github.com/GrowlyX/presage/api/v1alpha1"
-	"github.com/GrowlyX/presage/internal/agones"
-	"github.com/GrowlyX/presage/internal/controller"
-	"github.com/GrowlyX/presage/internal/obs"
+	"github.com/breezycourses/presage/api/v1alpha1"
+	"github.com/breezycourses/presage/internal/agones"
+	"github.com/breezycourses/presage/internal/controller"
+	"github.com/breezycourses/presage/internal/obs"
 )
 
 var scheme = runtime.NewScheme()
