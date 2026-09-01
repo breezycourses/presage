@@ -1,0 +1,66 @@
+name: ci
+on:
+  push: {branches: [main]}
+  pull_request:
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: {go-version: '1.25', cache: true}
+      - run: go vet ./...
+      - name: gofmt
+        run: |
+          test -z "$(gofmt -l ./api ./cmd ./internal)" || {
+            echo "gofmt needed:"; gofmt -l ./api ./cmd ./internal; exit 1;
+          }
+      - run: go test ./... -race -cover
+
+  generated:
+    # Generated manifests drifting from the Go types is a silent correctness
+    # bug: the CRD would reject fields the controller reads.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: {go-version: '1.25', cache: true}
+      - run: go install sigs.k8s.io/controller-tools/cmd/controller-gen@v0.19.0
+      - run: make generate
+      - name: check for drift
+        run: git diff --exit-code -- api config || {
+            echo "generated files are stale; run 'make generate'"; exit 1;
+          }
+
+  e2e:
+    # Runs the controller against a real apiserver + etcd. This is the only
+    # job that exercises CRD schemas, the scale subresource, finalizers, and
+    # the Agones webhook against the store the reconciler actually writes to.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: {go-version: '1.25', cache: true}
+      - run: go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
+      - run: make test-e2e
+
+  forecaster:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv run --extra dev pytest -q
+        working-directory: forecaster
+      - run: uv run --with pyyaml --with jsonschema python hack/validate_examples.py
+
+  model-e2e:
+    # Downloads the real TimesFM checkpoint (~1GB) and asserts the quantile
+    # block layout. Kept off pull requests because of the download cost; it is
+    # the only test that can catch TimesFM changing its output shape.
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: make test-model-e2e

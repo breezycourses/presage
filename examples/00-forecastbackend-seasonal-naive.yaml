@@ -1,0 +1,16 @@
+# The zero-infrastructure default. Runs in the controller process: no model
+# server, no GPU, no checkpoint download.
+#
+# Start here even if TimesFM is the goal. It is a genuinely hard baseline on
+# weekly-seasonal traffic, and having it configured the same way as the model
+# means "is the foundation model actually better on my workload?" is a one-line
+# change rather than a project.
+apiVersion: scaling.presage.sh/v1alpha1
+kind: ForecastBackend
+metadata:
+  name: default
+spec:
+  type: SeasonalNaive
+  seasonalNaive:
+    season: 168h   # weekly
+    cycles: 3      # average the last three weeks

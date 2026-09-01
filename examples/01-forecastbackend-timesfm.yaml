@@ -1,0 +1,30 @@
+# Google Research's TimesFM 2.5, served by presage-forecaster.
+#
+# Zero-shot: nothing is trained on your cluster's data. The model has seen
+# enough time series that it forecasts an unfamiliar one directly.
+apiVersion: scaling.presage.sh/v1alpha1
+kind: ForecastBackend
+metadata:
+  name: timesfm
+spec:
+  type: TimesFM
+  timesFM:
+    endpoint: http://presage-forecaster.presage-system:8080
+    model: google/timesfm-2.5-200m-pytorch
+
+    # These must match the forecaster's PRESAGE_MAX_CONTEXT and
+    # PRESAGE_MAX_HORIZON: the model is compiled for them at startup.
+    #
+    # Context is in *points*, not time, so the signal resolution decides how
+    # far back the model sees. At 5m resolution 4096 points is ~14 days, which
+    # covers weekly seasonality. At 1m resolution the same 4096 points is under
+    # three days, and weekly shape becomes invisible. TimesFM 2.5 supports up
+    # to 16384.
+    maxContext: 4096
+    maxHorizon: 64
+
+    # The 30M continuous quantile head. Without it there is no predictive
+    # distribution, capacity cannot be sized to a service level, and the
+    # scale-down uncertainty guard has nothing to measure.
+    useQuantileHead: true
+    timeout: 30s

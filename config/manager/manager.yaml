@@ -1,0 +1,70 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: presage-controller
+  namespace: presage-system
+  labels: {app.kubernetes.io/name: presage, app.kubernetes.io/component: controller}
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app.kubernetes.io/name: presage, app.kubernetes.io/component: controller}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: presage, app.kubernetes.io/component: controller}
+    spec:
+      serviceAccountName: presage-manager
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: manager
+          image: ghcr.io/growlyx/presage:dev
+          args:
+            - --leader-elect
+            - --agones-webhook
+            - --agones-webhook-bind-address=:8000
+          ports:
+            - {name: metrics, containerPort: 8080}
+            - {name: probes, containerPort: 8081}
+            # Agones service-based webhooks default to port 8000.
+            - {name: webhook, containerPort: 8000}
+          livenessProbe:
+            httpGet: {path: /healthz, port: 8081}
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet: {path: /readyz, port: 8081}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {memory: 256Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: presage-webhook
+  namespace: presage-system
+  labels: {app.kubernetes.io/name: presage}
+spec:
+  # Every replica serves the webhook, not just the leader. A non-leader has no
+  # cached recommendation and answers 503, which is exactly the signal that
+  # makes an Agones Chain policy fall through to its fallback.
+  selector: {app.kubernetes.io/name: presage, app.kubernetes.io/component: controller}
+  ports:
+    - {name: webhook, port: 8000, targetPort: webhook}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: presage-metrics
+  namespace: presage-system
+  labels: {app.kubernetes.io/name: presage}
+spec:
+  selector: {app.kubernetes.io/name: presage, app.kubernetes.io/component: controller}
+  ports:
+    - {name: metrics, port: 8080, targetPort: metrics}

@@ -1,0 +1,65 @@
+# The TimesFM model server. Optional: a ForecastBackend of type SeasonalNaive
+# runs in-process and needs none of this.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: presage-forecaster
+  namespace: presage-system
+  labels: {app.kubernetes.io/name: presage, app.kubernetes.io/component: forecaster}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: presage, app.kubernetes.io/component: forecaster}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: presage, app.kubernetes.io/component: forecaster}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: forecaster
+          image: ghcr.io/growlyx/presage-forecaster:dev
+          env:
+            - {name: PRESAGE_MODEL, value: "google/timesfm-2.5-200m-pytorch"}
+            # 4096 points at 5m resolution is ~14 days of context.
+            - {name: PRESAGE_MAX_CONTEXT, value: "4096"}
+            # 64 points at 5m resolution is ~5 hours ahead.
+            - {name: PRESAGE_MAX_HORIZON, value: "64"}
+            - {name: PRESAGE_USE_QUANTILE_HEAD, value: "true"}
+          ports:
+            - {name: http, containerPort: 8080}
+          livenessProbe:
+            # Liveness must not depend on the model: a 200M checkpoint takes
+            # tens of seconds to pull and compile, and a kubelet restart
+            # partway through means it never finishes.
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 20
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 10
+            failureThreshold: 60
+          resources:
+            requests: {cpu: "1", memory: 3Gi}
+            limits: {memory: 6Gi}
+          volumeMounts:
+            - {name: cache, mountPath: /cache}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+      volumes:
+        # Persist the checkpoint so a restart does not re-download it.
+        - name: cache
+          emptyDir: {sizeLimit: 4Gi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: presage-forecaster
+  namespace: presage-system
+spec:
+  selector: {app.kubernetes.io/name: presage, app.kubernetes.io/component: forecaster}
+  ports:
+    - {name: http, port: 8080, targetPort: http}

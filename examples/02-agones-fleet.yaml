@@ -1,0 +1,130 @@
+# Predictive autoscaling for an Agones Fleet.
+#
+# presage never writes Fleet replicas. It answers the FleetAutoscaler webhook
+# Agones already polls, and Agones stays the single writer. Combined with the
+# Chain policy below, that makes a presage outage a non-event: the webhook
+# entry errors, and Agones falls through to a plain Buffer policy.
+apiVersion: scaling.presage.sh/v1alpha1
+kind: PredictiveScaler
+metadata:
+  name: lobby
+  namespace: default
+spec:
+  # Start in Shadow. It publishes presage_recommended_replicas next to
+  # presage_current_replicas and changes nothing. Watch a few weeks of real
+  # traffic -- including at least one weekend -- before switching to Enforce.
+  mode: Shadow
+  interval: 1m
+
+  scaleTargetRef:
+    apiVersion: agones.dev/v1
+    kind: Fleet
+    name: lobby
+    agones:
+      # Past this age the webhook returns an error rather than a stale number,
+      # so Agones falls through to the Chain fallback. Keep it comfortably
+      # above `interval`.
+      maxRecommendationAge: 5m
+
+  signal:
+    prometheus:
+      address: http://vmselect.monitoring:8481/select/0/prometheus
+      # Agones exports this itself, so this works with no extra
+      # instrumentation on the game server. Swap in your own player-count
+      # metric once you have one -- it leads allocations slightly, which is
+      # worth a little lead time.
+      query: |
+        sum(agones_fleets_replicas_count{fleet_name="lobby", type="allocated"})
+    resolution: 5m
+    history: 14d
+
+  leadTime:
+    # How long from "decide to scale up" to "a GameServer is Ready". This is
+    # the whole point: a reactive autoscaler sees demand at T and lands a
+    # replica at T+lead, so it is structurally always one lead time late.
+    # presage forecasts demand *at* T+lead instead.
+    source: Observed
+    observed:
+      address: http://vmselect.monitoring:8481/select/0/prometheus
+      # A high quantile of scheduled -> ready. Measure it; do not guess it.
+      query: |
+        histogram_quantile(0.95,
+          sum by (le) (rate(agones_gameservers_state_duration_bucket{state="Scheduled"}[6h])))
+    min: 30s
+    max: 10m
+
+  capacity:
+    # The signal is already in units of GameServers, so one replica serves one.
+    perReplica: "1"
+
+  forecast:
+    backendRef: timesfm
+
+  policy:
+    minReplicas: 3
+    maxReplicas: 40
+
+    # Size capacity to the 90th percentile of forecast demand. A more
+    # uncertain forecast has a fatter upper tail and therefore provisions
+    # more, which is the behaviour you want from uncertainty.
+    targetQuantile: "0.9"
+
+    # The lower quantile never sets the target. Its only job is to measure
+    # confidence for the guard below.
+    scaleDownQuantile: "0.5"
+    scaleDownUncertaintyGuard:
+      enabled: true
+      maxRelativeSpread: "0.25"
+
+    headroom: "10%"
+
+    # The safety property that makes this a strict improvement over the Buffer
+    # policy it replaces: never go below what a reactive buffer would have
+    # chosen from present demand. A wrong forecast can then only ever
+    # over-provision.
+    reactiveFloor:
+      enabled: true
+      bufferSize: 2
+
+    stabilization:
+      scaleDownWindow: 15m
+      maxScaleUpRate: "100%"
+      maxScaleDownRate: "20%"
+---
+# The Agones side. Order matters: the predictive webhook is tried first, and
+# `fallback` catches a presage outage, a stale recommendation, Shadow mode, and
+# the cold-start window before the first forecast exists.
+#
+# Without the fallback entry, a presage outage would leave the Fleet frozen at
+# its last size. With it, the Fleet simply reverts to buffer autoscaling.
+apiVersion: autoscaling.agones.dev/v1
+kind: FleetAutoscaler
+metadata:
+  name: lobby
+  namespace: default
+spec:
+  fleetName: lobby
+  policy:
+    type: Chain
+    chain:
+      - id: predictive
+        type: Webhook
+        webhook:
+          service:
+            name: presage-webhook
+            namespace: presage-system
+            path: /scale/default/lobby
+            port: 8000
+      - id: fallback
+        type: Buffer
+        buffer:
+          bufferSize: 2
+          minReplicas: 3
+          maxReplicas: 40
+  sync:
+    type: FixedInterval
+    fixedInterval:
+      # Agones polls this often; presage refreshes its forecast on its own,
+      # slower `interval` and the webhook serves the cached value. The model
+      # is never on this path.
+      seconds: 30

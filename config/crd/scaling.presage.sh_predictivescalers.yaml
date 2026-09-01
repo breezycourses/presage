@@ -1,0 +1,601 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.19.0
+  name: predictivescalers.scaling.presage.sh
+spec:
+  group: scaling.presage.sh
+  names:
+    categories:
+    - autoscaling
+    kind: PredictiveScaler
+    listKind: PredictiveScalerList
+    plural: predictivescalers
+    shortNames:
+    - pscaler
+    - ps
+    singular: predictivescaler
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.mode
+      name: Mode
+      type: string
+    - jsonPath: .spec.scaleTargetRef.name
+      name: Target
+      type: string
+    - jsonPath: .status.currentReplicas
+      name: Current
+      type: integer
+    - jsonPath: .status.recommendedReplicas
+      name: Recommended
+      type: integer
+    - jsonPath: .status.breakdown.constraint
+      name: Bound
+      priority: 1
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          PredictiveScaler forecasts a workload's demand and sizes it for the demand
+          expected once new replicas are actually ready.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: PredictiveScalerSpec defines the desired state of a PredictiveScaler.
+            properties:
+              capacity:
+                description: CapacitySpec converts forecast units into replicas.
+                properties:
+                  perReplica:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    default: "1"
+                    description: |-
+                      PerReplica is how many units of the signal one replica serves. If the
+                      signal is already expressed in replicas (for example, forecasting
+                      allocated GameServers directly), set this to 1.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  query:
+                    description: |-
+                      Query optionally derives per-replica capacity from live data instead of
+                      a constant, e.g. average capacity across the fleet. Takes precedence
+                      over PerReplica when set.
+                    properties:
+                      address:
+                        description: |-
+                          Address is the base URL of the query endpoint, e.g.
+                          "http://vmselect.monitoring:8481/select/0/prometheus".
+                        minLength: 1
+                        type: string
+                      bearerTokenSecretRef:
+                        description: BearerTokenSecretRef optionally supplies an Authorization
+                          bearer token.
+                        properties:
+                          key:
+                            minLength: 1
+                            type: string
+                          name:
+                            minLength: 1
+                            type: string
+                        required:
+                        - key
+                        - name
+                        type: object
+                      insecureSkipVerify:
+                        description: InsecureSkipVerify disables TLS verification.
+                          Not recommended.
+                        type: boolean
+                      query:
+                        description: |-
+                          Query must evaluate to exactly one series. If it returns more than one,
+                          the PredictiveScaler goes Degraded rather than silently picking one.
+                        minLength: 1
+                        type: string
+                    required:
+                    - address
+                    - query
+                    type: object
+                type: object
+              forecast:
+                description: ForecastSpec selects and parameterises the forecasting
+                  backend.
+                properties:
+                  backendRef:
+                    description: |-
+                      BackendRef names a cluster-scoped ForecastBackend. If unset, the backend
+                      named "default" is used.
+                    type: string
+                  horizon:
+                    description: |-
+                      Horizon is how far ahead to forecast. It must be at least the lead time;
+                      forecasting further is harmless and makes the projected curve useful for
+                      dashboards. Defaults to 4x the resolved lead time.
+                    type: string
+                type: object
+              interval:
+                default: 1m
+                description: |-
+                  Interval is how often to refresh the forecast and recommendation. Note
+                  that for Agones targets this is decoupled from the FleetAutoscaler sync
+                  period: Agones may poll the webhook every 30s while presage refreshes
+                  the underlying forecast far less often.
+                type: string
+              leadTime:
+                description: |-
+                  LeadTimeSpec configures the forecast horizon.
+
+                  This is the reason predictive autoscaling beats reactive autoscaling. A
+                  reactive autoscaler observes demand at time T and starts a replica that is
+                  only useful at T+lead, so it is structurally always one lead time behind.
+                  presage forecasts demand *at* T+lead and provisions for that instead.
+                properties:
+                  max:
+                    default: 15m
+                    type: string
+                  min:
+                    default: 30s
+                    description: |-
+                      Min and Max clamp the resolved lead time. They bound the damage from a
+                      bad Observed query and stop the horizon from collapsing to zero (which
+                      would silently turn presage into a reactive autoscaler).
+                    type: string
+                  observed:
+                    description: |-
+                      Observed is the query used when Source is Observed. It must return a
+                      single scalar in seconds -- typically a high quantile of the time from
+                      pod creation to readiness.
+                    properties:
+                      address:
+                        description: |-
+                          Address is the base URL of the query endpoint, e.g.
+                          "http://vmselect.monitoring:8481/select/0/prometheus".
+                        minLength: 1
+                        type: string
+                      bearerTokenSecretRef:
+                        description: BearerTokenSecretRef optionally supplies an Authorization
+                          bearer token.
+                        properties:
+                          key:
+                            minLength: 1
+                            type: string
+                          name:
+                            minLength: 1
+                            type: string
+                        required:
+                        - key
+                        - name
+                        type: object
+                      insecureSkipVerify:
+                        description: InsecureSkipVerify disables TLS verification.
+                          Not recommended.
+                        type: boolean
+                      query:
+                        description: |-
+                          Query must evaluate to exactly one series. If it returns more than one,
+                          the PredictiveScaler goes Degraded rather than silently picking one.
+                        minLength: 1
+                        type: string
+                    required:
+                    - address
+                    - query
+                    type: object
+                  source:
+                    default: Static
+                    description: LeadTimeSource selects how the provisioning lead
+                      time is determined.
+                    enum:
+                    - Static
+                    - Observed
+                    type: string
+                  static:
+                    default: 2m
+                    description: Static is the lead time used when Source is Static.
+                    type: string
+                type: object
+              mode:
+                default: Shadow
+                description: |-
+                  Mode defaults to Shadow. Run a workload in Shadow long enough to compare
+                  the recommendation against what actually happened before switching.
+                enum:
+                - Shadow
+                - Enforce
+                type: string
+              policy:
+                description: |-
+                  PolicySpec is the decision layer: how a predictive distribution becomes a
+                  replica count.
+                properties:
+                  headroom:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    default: 10%
+                    description: |-
+                      Headroom is extra capacity applied on top of the forecast, as an
+                      absolute number of signal units or a percentage.
+                    x-kubernetes-int-or-string: true
+                  maxReplicas:
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  minReplicas:
+                    default: 1
+                    format: int32
+                    minimum: 0
+                    type: integer
+                  reactiveFloor:
+                    description: |-
+                      ReactiveFloor keeps a conventional reactive computation running
+                      alongside the forecast and takes the maximum of the two. With it
+                      enabled, forecast error can only ever cause over-provisioning -- presage
+                      is then strictly safer than the reactive policy it replaces. Disabling
+                      it is what unlocks scale-to-zero, at the cost of that guarantee.
+
+                      MaxReplicas and MaxScaleUpRate remain hard constraints and can bind
+                      below the floor; the floor removes forecast error as a cause of
+                      under-provisioning, not operator-configured limits.
+                    properties:
+                      bufferSize:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        default: 10%
+                        description: |-
+                          BufferSize is the spare capacity the reactive floor insists on, as an
+                          absolute number of replicas or a percentage of current demand.
+                        x-kubernetes-int-or-string: true
+                      enabled:
+                        default: true
+                        type: boolean
+                    type: object
+                  scaleDownQuantile:
+                    default: "0.5"
+                    description: |-
+                      ScaleDownQuantile is the lower quantile used to measure how confident
+                      the forecast is. It never sets the target -- its only job is to feed
+                      ScaleDownUncertaintyGuard.
+                    type: string
+                  scaleDownUncertaintyGuard:
+                    description: |-
+                      ScaleDownUncertaintyGuard refuses to release capacity while the forecast
+                      is too uncertain. Adding capacity is deliberately never gated this way.
+                    properties:
+                      enabled:
+                        default: true
+                        type: boolean
+                      maxRelativeSpread:
+                        default: "0.25"
+                        description: |-
+                          MaxRelativeSpread is the largest (upper - lower) / max(lower, 1) that
+                          still permits a scale-down. Lower values are more conservative.
+                        type: string
+                    type: object
+                  stabilization:
+                    description: StabilizationSpec damps oscillation.
+                    properties:
+                      maxScaleDownRate:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        default: 20%
+                        description: MaxScaleDownRate caps a single step's decrease.
+                        x-kubernetes-int-or-string: true
+                      maxScaleUpRate:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        default: 100%
+                        description: |-
+                          MaxScaleUpRate caps a single step's increase, as replicas or a
+                          percentage of current replicas.
+                        x-kubernetes-int-or-string: true
+                      scaleDownWindow:
+                        default: 15m
+                        description: |-
+                          ScaleDownWindow is how long the recommendation must stay below the
+                          current replica count before a scale-down is allowed. Scale-up is
+                          deliberately not delayed by default: the whole point is to be early.
+                        type: string
+                    type: object
+                  targetQuantile:
+                    default: "0.9"
+                    description: |-
+                      TargetQuantile is the service level capacity is sized to: the workload
+                      is provisioned for the demand this quantile of the forecast implies, in
+                      both directions. Raising it buys protection against being wrong in the
+                      expensive direction.
+
+                      Note that a more uncertain forecast has a fatter upper tail, so this
+                      automatically provisions more when the model is unsure. Uncertainty
+                      should buy capacity, not hesitation.
+                    type: string
+                required:
+                - maxReplicas
+                type: object
+              scaleTargetRef:
+                description: |-
+                  ScaleTargetRef identifies the workload whose replica count is being managed.
+
+                  Two families of target are supported:
+
+                    - Anything exposing the standard `scale` subresource (Deployment,
+                      StatefulSet, ReplicaSet, and most custom resources that implement it).
+                      This is the default and requires no target-specific support in presage.
+                    - An Agones Fleet, which is NOT scaled directly. Instead presage serves a
+                      FleetAutoscaler webhook for it; see AgonesFleetTarget.
+                properties:
+                  agones:
+                    description: |-
+                      Agones carries options that only apply when Kind is "Fleet" in the
+                      agones.dev group. When set, presage does not write replicas directly;
+                      it publishes the recommendation on its FleetAutoscaler webhook endpoint
+                      so that Agones remains the single writer of Fleet replicas.
+                    properties:
+                      maxRecommendationAge:
+                        default: 5m
+                        description: |-
+                          MaxRecommendationAge is how stale a cached recommendation may be before
+                          the webhook starts refusing to answer (returning an error so that a
+                          Chain policy falls through to its next entry). Keep this comfortably
+                          above the reconcile Interval.
+                        type: string
+                    type: object
+                  apiVersion:
+                    description: APIVersion of the target, e.g. "apps/v1".
+                    minLength: 1
+                    type: string
+                  kind:
+                    description: Kind of the target, e.g. "Deployment".
+                    minLength: 1
+                    type: string
+                  name:
+                    description: Name of the target. Must be in the same namespace
+                      as the PredictiveScaler.
+                    minLength: 1
+                    type: string
+                required:
+                - apiVersion
+                - kind
+                - name
+                type: object
+              signal:
+                description: SignalSpec describes the time series that drives the
+                  forecast.
+                properties:
+                  history:
+                    default: 14d
+                    description: |-
+                      History is how much past data to feed the model. Capped by the backend's
+                      maximum context length. Two to four weeks is a reasonable default for
+                      workloads with weekly seasonality.
+                    type: string
+                  prometheus:
+                    description: |-
+                      Prometheus reads the signal from a Prometheus-compatible range query
+                      endpoint (Prometheus, Thanos, Mimir, VictoriaMetrics vmselect, ...).
+                    properties:
+                      address:
+                        description: |-
+                          Address is the base URL of the query endpoint, e.g.
+                          "http://vmselect.monitoring:8481/select/0/prometheus".
+                        minLength: 1
+                        type: string
+                      bearerTokenSecretRef:
+                        description: BearerTokenSecretRef optionally supplies an Authorization
+                          bearer token.
+                        properties:
+                          key:
+                            minLength: 1
+                            type: string
+                          name:
+                            minLength: 1
+                            type: string
+                        required:
+                        - key
+                        - name
+                        type: object
+                      insecureSkipVerify:
+                        description: InsecureSkipVerify disables TLS verification.
+                          Not recommended.
+                        type: boolean
+                      query:
+                        description: |-
+                          Query must evaluate to exactly one series. If it returns more than one,
+                          the PredictiveScaler goes Degraded rather than silently picking one.
+                        minLength: 1
+                        type: string
+                    required:
+                    - address
+                    - query
+                    type: object
+                  resolution:
+                    default: 5m
+                    description: |-
+                      Resolution is the bucket width the series is sampled at. This is the
+                      single most consequential tuning knob: a foundation model sees a fixed
+                      number of points, so resolution decides how far back its context reaches.
+                      At 5m with a 16k-point context you get ~57 days, which comfortably covers
+                      weekly seasonality. At 1m you get ~11 days, which does not.
+                    type: string
+                type: object
+            required:
+            - policy
+            - scaleTargetRef
+            - signal
+            type: object
+          status:
+            description: PredictiveScalerStatus is the observed state of a PredictiveScaler.
+            properties:
+              breakdown:
+                description: |-
+                  RecommendationBreakdown records how the number was arrived at, so that a
+                  surprising replica count can be explained without re-deriving it.
+                properties:
+                  constraint:
+                    description: |-
+                      Constraint names the binding constraint, if any: one of
+                      "MinReplicas", "MaxReplicas", "ReactiveFloor", "ScaleDownWindow",
+                      "MaxScaleUpRate", "MaxScaleDownRate", or "" when the forecast bound.
+                    type: string
+                  predictive:
+                    description: Predictive is the replica count implied by the forecast
+                      alone.
+                    format: int32
+                    type: integer
+                  reactive:
+                    description: Reactive is the replica count the reactive floor
+                      would have chosen.
+                    format: int32
+                    type: integer
+                required:
+                - predictive
+                type: object
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              currentReplicas:
+                description: CurrentReplicas last read from the target.
+                format: int32
+                type: integer
+              lastForecast:
+                description: ForecastSample is the forecast evaluated at the lead
+                  time.
+                properties:
+                  backend:
+                    description: Backend that produced it.
+                    type: string
+                  generatedAt:
+                    description: GeneratedAt is when the forecast was produced.
+                    format: date-time
+                    type: string
+                  leadTimeSeconds:
+                    description: LeadTimeSeconds actually used for this forecast.
+                    format: int32
+                    type: integer
+                  model:
+                    description: Model identifier reported by the backend, if any.
+                    type: string
+                  point:
+                    description: Point is the point forecast at the lead time.
+                    type: string
+                  quantiles:
+                    additionalProperties:
+                      type: string
+                    description: Quantiles maps quantile to forecast value at the
+                      lead time.
+                    type: object
+                required:
+                - backend
+                - generatedAt
+                - leadTimeSeconds
+                - point
+                type: object
+              lastScaleTime:
+                format: date-time
+                type: string
+              observedGeneration:
+                format: int64
+                type: integer
+              recommendedReplicas:
+                description: |-
+                  RecommendedReplicas is what presage would apply (and does apply in
+                  Enforce mode).
+                format: int32
+                type: integer
+              scaleDownCandidateSince:
+                description: |-
+                  ScaleDownCandidateSince tracks the start of the scale-down stabilization
+                  window. Cleared whenever the recommendation stops being below current.
+                format: date-time
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

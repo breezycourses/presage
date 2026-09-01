@@ -1,0 +1,39 @@
+# A minimal stand-in for the Agones Fleet CRD.
+#
+# presage references Fleets by GVK and reads only status.replicas, so the e2e
+# suite does not need Agones installed -- just a resource at the same
+# coordinates. Keeping this deliberately minimal also documents exactly how
+# much of the Agones API presage actually depends on.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: fleets.agones.dev
+spec:
+  group: agones.dev
+  names:
+    kind: Fleet
+    listKind: FleetList
+    plural: fleets
+    singular: fleet
+  scope: Namespaced
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                replicas: {type: integer}
+            status:
+              type: object
+              properties:
+                replicas: {type: integer}
+                readyReplicas: {type: integer}
+                reservedReplicas: {type: integer}
+                allocatedReplicas: {type: integer}

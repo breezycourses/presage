@@ -1,0 +1,48 @@
+# Predictive autoscaling for anything with a `scale` subresource.
+#
+# presage writes replicas directly here, so do not also point an HPA at the
+# same Deployment: the two would fight every sync period.
+apiVersion: scaling.presage.sh/v1alpha1
+kind: PredictiveScaler
+metadata:
+  name: api
+  namespace: default
+spec:
+  mode: Shadow
+  interval: 1m
+
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: api
+
+  signal:
+    prometheus:
+      address: http://prometheus-operated.monitoring:9090
+      query: sum(rate(http_requests_total{app="api"}[5m]))
+    resolution: 5m
+    history: 14d
+
+  leadTime:
+    source: Static
+    static: 90s   # image pull + JVM warmup + readiness gate
+
+  capacity:
+    # Requests per second one replica serves at an acceptable latency. This is
+    # the number to get right: everything else is a correction on top of it.
+    perReplica: "250"
+
+  forecast:
+    backendRef: default   # SeasonalNaive; no model server required
+
+  policy:
+    minReplicas: 2
+    maxReplicas: 50
+    targetQuantile: "0.9"
+    headroom: "15%"
+    reactiveFloor:
+      enabled: true
+      bufferSize: "20%"
+    stabilization:
+      scaleDownWindow: 10m
+      maxScaleDownRate: "25%"

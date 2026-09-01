@@ -1,0 +1,6 @@
+.git
+bin
+dist
+forecaster/.venv
+**/__pycache__
+*.md
