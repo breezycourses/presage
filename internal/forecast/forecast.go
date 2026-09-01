@@ -50,6 +50,9 @@ type Result struct {
 	Backend string
 	// Model identifier, when the backend has one.
 	Model string
+	// Revision of the model weights, when the backend pins one. Recorded so a
+	// forecast carries the provenance of the weights that produced it.
+	Revision string
 	// Latency the backend reported, if any.
 	Latency time.Duration
 }

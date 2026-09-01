@@ -170,6 +170,7 @@ func TestTimesFM_RoundTrip(t *testing.T) {
 		}
 		_ = json.NewEncoder(w).Encode(timesfmResponse{
 			Model:     "google/timesfm-2.5-200m-pytorch",
+			Revision:  "1d952420fba87f3c6dee4f240de0f1a0fbc790e3",
 			LatencyMS: 42,
 			Forecasts: []timesfmForecast{{
 				ID:        "t",
@@ -191,6 +192,9 @@ func TestTimesFM_RoundTrip(t *testing.T) {
 	}
 	if res.Model != "google/timesfm-2.5-200m-pytorch" {
 		t.Fatalf("unexpected model %q", res.Model)
+	}
+	if res.Revision != "1d952420fba87f3c6dee4f240de0f1a0fbc790e3" {
+		t.Fatalf("model revision did not round-trip: %q", res.Revision)
 	}
 	if res.Quantiles[0.9][1] != 4 {
 		t.Fatalf("quantile did not round-trip: %v", res.Quantiles)
