@@ -35,6 +35,13 @@ tests share — it has already found a completely broken scale-subresource path
 and a gap-ratio guard that was measuring against the wrong denominator. If you
 change anything about how presage talks to the API server, add a case here.
 
+**Cluster e2e** (`make test-kind`) stands the controller up on a real kind
+cluster with a real kubelet and drives a workload through a fake Prometheus. It
+covers what envtest cannot: whether the image builds and runs at all, whether
+the deployed RBAC is what the controller actually needs, and whether replicas
+presage asks for genuinely arrive. Its first three runs each found a different
+real defect.
+
 **Model e2e** (`make test-model-e2e`) runs the forecaster against the real
 TimesFM checkpoint. It downloads about 1GB, so it is opt-in via
 `PRESAGE_E2E=1` and runs in CI only on pushes to `main`. It is the only test

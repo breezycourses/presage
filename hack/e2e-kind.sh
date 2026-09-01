@@ -15,14 +15,17 @@ set -euo pipefail
 CLUSTER=presage-e2e
 NS=presage-e2e
 IMG=presage:e2e
+FAKE_IMG=presage-fakemetrics:e2e
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 KEEP="${KEEP:-0}"
+scratch="$(mktemp -d)"
 
 log()  { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
 fail() { printf '\033[1;31mFAIL: %s\033[0m\n' "$*" >&2; exit 1; }
 
 cleanup() {
   local code=$?
+  rm -rf "$scratch"
   if [ "$code" -ne 0 ]; then
     log "failed; dumping state"
     kubectl -n "$NS" get predictivescalers -o yaml 2>/dev/null | head -80 || true
@@ -72,15 +75,14 @@ log "building and loading the controller image"
 docker build -t "$IMG" "$ROOT"
 kind load docker-image "$IMG" --name "$CLUSTER"
 
-# Pull the workload images on the host and side-load them, rather than letting
-# the kubelet pull them inside the cluster. An in-cluster pull of
-# python:3.12-slim took over three minutes on a cold node, which is slower than
-# any sane rollout timeout and made the suite look like it had a bug.
-log "side-loading workload images"
-for image in python:3.12-slim registry.k8s.io/pause:3.10; do
-  docker pull -q "$image" >/dev/null
-  kind load docker-image "$image" --name "$CLUSTER" >/dev/null
-done
+# Built locally rather than pulled. kind side-loads with --all-platforms, and a
+# multi-arch image pulled from a registry only has this host's blobs present,
+# so loading it fails with "content digest ...: not found". A locally built
+# image is single-platform and loads cleanly -- which is also why the controller
+# image above has always worked.
+log "building and loading the fake metrics image"
+docker build -q -t "$FAKE_IMG" -f "$ROOT/test/kind/fakemetrics/Dockerfile" "$ROOT" >/dev/null
+kind load docker-image "$FAKE_IMG" --name "$CLUSTER" >/dev/null
 
 log "installing CRDs and the controller"
 kubectl apply -f "$ROOT/config/crd" >/dev/null
