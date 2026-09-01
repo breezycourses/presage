@@ -26,11 +26,14 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with: {go-version: 'stable', cache: true}
+      - uses: astral-sh/setup-uv@v5
       - run: go install sigs.k8s.io/controller-tools/cmd/controller-gen@v0.19.0
-      - run: make generate
+      - run: make generate chart-sync-crds api-docs
       - name: check for drift
-        run: git diff --exit-code -- api config || {
-            echo "generated files are stale; run 'make generate'"; exit 1;
+        # A stale CRD installs a schema that rejects fields the controller
+        # writes, and a stale API reference is worse than none.
+        run: git diff --exit-code -- api config charts docs/api-reference.md || {
+            echo "generated files are stale; run 'make generate chart-sync-crds api-docs'"; exit 1;
           }
 
   e2e:

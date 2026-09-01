@@ -75,3 +75,7 @@ test-e2e: ## Run the controller e2e suite against a real API server
 .PHONY: test-model-e2e
 test-model-e2e: ## Run the forecaster against the real TimesFM checkpoint (downloads ~1GB)
 	cd forecaster && PRESAGE_E2E=1 uv run --extra torch --extra dev pytest tests/test_real_model.py -v
+
+.PHONY: api-docs
+api-docs: ## Regenerate docs/api-reference.md from the CRDs
+	uv run --with pyyaml python hack/gen_api_docs.py

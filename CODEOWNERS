@@ -1,0 +1,9 @@
+# Default owner for everything.
+*       @GrowlyX
+
+# The policy engine decides what happens to someone's production workload when
+# presage is wrong. Flagged separately so a change here is never reviewed as a
+# routine diff.
+/internal/policy/       @GrowlyX
+/api/                   @GrowlyX
+/SECURITY.md            @GrowlyX

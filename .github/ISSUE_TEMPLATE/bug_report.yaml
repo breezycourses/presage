@@ -1,0 +1,63 @@
+name: Bug report
+description: Something behaves differently from what is documented
+labels: [kind/bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For security issues, use
+        [private reporting](https://github.com/GrowlyX/presage/security/advisories/new)
+        instead. Do not file them here.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: Include what you expected instead.
+    validations: {required: true}
+
+  - type: textarea
+    id: scaler
+    attributes:
+      label: The PredictiveScaler
+      description: |
+        `kubectl get predictivescaler <name> -o yaml`, with secrets redacted.
+        Please include `status` — `status.breakdown.constraint` names the rule
+        that bound the recommendation and usually answers "why that number?"
+        on its own.
+      render: yaml
+    validations: {required: true}
+
+  - type: input
+    id: version
+    attributes:
+      label: presage version
+      placeholder: "0.1.0, or a commit SHA"
+    validations: {required: true}
+
+  - type: input
+    id: k8s
+    attributes:
+      label: Kubernetes version
+      placeholder: "v1.33.9"
+    validations: {required: true}
+
+  - type: dropdown
+    id: backend
+    attributes:
+      label: Forecast backend
+      options: [SeasonalNaive, TimesFM, both]
+    validations: {required: true}
+
+  - type: dropdown
+    id: target
+    attributes:
+      label: Scale target
+      options: ["Deployment / StatefulSet (scale subresource)", "Agones Fleet", other]
+    validations: {required: true}
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Controller logs
+      render: shell
