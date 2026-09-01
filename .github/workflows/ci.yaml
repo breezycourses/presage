@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with: {go-version: 'stable', cache: true}
       - run: go vet ./...
       - name: gofmt
@@ -33,7 +33,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with: {go-version: 'stable', cache: true}
       - run: go install golang.org/x/vuln/cmd/govulncheck@latest
       - run: govulncheck ./...
@@ -44,7 +44,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with: {go-version: 'stable', cache: true}
       - uses: astral-sh/setup-uv@v5
       - run: go install sigs.k8s.io/controller-tools/cmd/controller-gen@v0.19.0
@@ -63,7 +63,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with: {go-version: 'stable', cache: true}
       - run: go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
       - run: make test-e2e
