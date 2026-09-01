@@ -80,14 +80,13 @@ type Config struct {
 	MaxScaleDownRate Amount
 }
 
-// Input is the per-evaluation state.
-type Input struct {
-	Now time.Time
+// Signal is one demand dimension: a forecast, present demand, and the capacity
+// one replica provides for it.
+type Signal struct {
+	// Name identifies the signal in the decision trace.
+	Name string
 
-	// CurrentReplicas as last read from the target.
-	CurrentReplicas int32
-
-	// PerReplica is how many units of the signal one replica serves.
+	// PerReplica is how many units of this signal one replica serves.
 	PerReplica float64
 
 	// ForecastUp is the forecast at the target quantile, evaluated at the lead
@@ -101,9 +100,26 @@ type Input struct {
 	ForecastUp   float64
 	ForecastDown float64
 
-	// CurrentDemand is the most recent observed value of the signal. Only used
-	// by the reactive floor.
+	// CurrentDemand is the most recent observed value. Only used by the
+	// reactive floor.
 	CurrentDemand float64
+}
+
+// Input is the per-evaluation state.
+type Input struct {
+	Now time.Time
+
+	// CurrentReplicas as last read from the target.
+	CurrentReplicas int32
+
+	// Signals are the demand dimensions to satisfy. Each is converted to a
+	// replica requirement independently and the largest wins, the way an HPA
+	// combines multiple metrics: a workload has to be big enough for every
+	// dimension, so the binding one is whichever needs the most.
+	//
+	// Averaging or summing instead would let a quiet dimension mask a busy one,
+	// which is the failure this design exists to avoid.
+	Signals []Signal
 
 	// ScaleDownCandidateSince is when the recommendation first dropped below
 	// the current replica count, carried across evaluations in status.
@@ -140,6 +156,12 @@ type Decision struct {
 	// predictive value, or ConstraintNone if the forecast bound.
 	Constraint Constraint
 
+	// BindingSignal names the signal that required the most replicas. With one
+	// signal this is trivially that signal; with several it answers "which
+	// dimension is actually driving the size of this workload", which is the
+	// first thing anyone asks.
+	BindingSignal string
+
 	// ScaleDownCandidateSince is the tracker to persist for the next
 	// evaluation. Nil means "not currently a scale-down candidate".
 	ScaleDownCandidateSince *time.Time
@@ -155,6 +177,8 @@ var (
 	ErrInvalidForecast = errors.New("policy: forecast values must be finite")
 	// ErrInvalidBounds is returned when min/max replicas are inconsistent.
 	ErrInvalidBounds = errors.New("policy: maxReplicas must be >= minReplicas and >= 1")
+	// ErrNoSignals is returned when there is nothing to scale on.
+	ErrNoSignals = errors.New("policy: at least one signal is required")
 )
 
 // Evaluate computes a replica recommendation.
@@ -172,47 +196,69 @@ var (
 //     early is the entire point of forecasting.
 //  4. Rate-limit the step, then clamp to [MinReplicas, MaxReplicas].
 func Evaluate(cfg Config, in Input) (Decision, error) {
-	if in.PerReplica <= 0 || math.IsNaN(in.PerReplica) || math.IsInf(in.PerReplica, 0) {
-		return Decision{}, ErrInvalidCapacity
-	}
-	if !finite(in.ForecastUp) || !finite(in.ForecastDown) || !finite(in.CurrentDemand) {
-		return Decision{}, ErrInvalidForecast
+	if len(in.Signals) == 0 {
+		return Decision{}, ErrNoSignals
 	}
 	if cfg.MaxReplicas < 1 || cfg.MaxReplicas < cfg.MinReplicas {
 		return Decision{}, ErrInvalidBounds
 	}
 
-	// Defensive: quantile crossing. TimesFM can be asked to fix this itself,
-	// but a backend that does not must never invert the policy.
-	up, down := math.Max(in.ForecastUp, 0), math.Max(in.ForecastDown, 0)
-	if up < down {
-		up, down = down, up
-	}
-
 	current := in.CurrentReplicas
-	replicasFor := func(demand float64) int32 {
-		withHeadroom := demand + cfg.Headroom.Of(demand)
-		return int32(math.Ceil(withHeadroom / in.PerReplica))
+
+	// Step 1: each signal becomes a replica requirement; the largest binds.
+	var (
+		target     int32
+		binding    string
+		bindingUp  float64
+		bindingLow float64
+	)
+	for _, sig := range in.Signals {
+		if sig.PerReplica <= 0 || math.IsNaN(sig.PerReplica) || math.IsInf(sig.PerReplica, 0) {
+			return Decision{}, fmt.Errorf("%w: signal %q", ErrInvalidCapacity, sig.Name)
+		}
+		if !finite(sig.ForecastUp) || !finite(sig.ForecastDown) || !finite(sig.CurrentDemand) {
+			return Decision{}, fmt.Errorf("%w: signal %q", ErrInvalidForecast, sig.Name)
+		}
+
+		// Defensive: quantile crossing. TimesFM can be asked to fix this
+		// itself, but a backend that does not must never invert the policy.
+		up, down := math.Max(sig.ForecastUp, 0), math.Max(sig.ForecastDown, 0)
+		if up < down {
+			up, down = down, up
+		}
+
+		need := replicasFor(cfg, up, sig.PerReplica)
+		if binding == "" || need > target {
+			target, binding, bindingUp, bindingLow = need, sig.Name, up, down
+		}
 	}
 
-	// Step 1: the upper quantile is the capacity target.
-	target := replicasFor(up)
 	predictive := target
 	constraint := ConstraintNone
-	explain := fmt.Sprintf("forecast q_target=%.2f -> %d replicas (current %d)", up, target, current)
+	explain := fmt.Sprintf("signal %q forecast q_target=%.2f -> %d replicas (current %d)",
+		binding, bindingUp, target, current)
+	up, down := bindingUp, bindingLow
 
-	// Step 2: reactive floor.
+	// Step 2: reactive floor, taken across every signal for the same reason
+	// the target is: the workload must be big enough for all of them.
 	var reactive *int32
 	if cfg.ReactiveFloor != nil {
-		base := int32(math.Ceil(in.CurrentDemand / in.PerReplica))
-		buf := int32(math.Ceil(cfg.ReactiveFloor.Buffer.Of(float64(base))))
-		r := base + buf
+		var r int32
+		var floorSignal string
+		var floorDemand float64
+		for _, sig := range in.Signals {
+			base := int32(math.Ceil(sig.CurrentDemand / sig.PerReplica))
+			need := base + int32(math.Ceil(cfg.ReactiveFloor.Buffer.Of(float64(base))))
+			if floorSignal == "" || need > r {
+				r, floorSignal, floorDemand = need, sig.Name, sig.CurrentDemand
+			}
+		}
 		reactive = &r
 		if r > target {
 			target = r
 			constraint = ConstraintReactiveFloor
-			explain += fmt.Sprintf("; reactive floor raised to %d (demand %.2f + buffer %s)",
-				r, in.CurrentDemand, cfg.ReactiveFloor.Buffer)
+			explain += fmt.Sprintf("; reactive floor raised to %d (signal %q demand %.2f + buffer %s)",
+				r, floorSignal, floorDemand, cfg.ReactiveFloor.Buffer)
 		}
 	}
 
@@ -288,12 +334,19 @@ func Evaluate(cfg Config, in Input) (Decision, error) {
 		Predictive:              predictive,
 		Reactive:                reactive,
 		Constraint:              constraint,
+		BindingSignal:           binding,
 		ScaleDownCandidateSince: candidateSince,
 		Explain:                 explain,
 	}, nil
 }
 
 func finite(f float64) bool { return !math.IsNaN(f) && !math.IsInf(f, 0) }
+
+// replicasFor converts a demand figure into replicas, including headroom.
+func replicasFor(cfg Config, demand, perReplica float64) int32 {
+	withHeadroom := demand + cfg.Headroom.Of(demand)
+	return int32(math.Ceil(withHeadroom / perReplica))
+}
 
 // relativeSpread measures forecast uncertainty as the gap between the upper
 // and lower quantiles, normalised by the lower one. The max(.,1) floor keeps
