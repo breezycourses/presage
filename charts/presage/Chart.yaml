@@ -1,0 +1,82 @@
+apiVersion: v2
+name: presage
+description: Forecast-driven autoscaling for Kubernetes and Agones, using TimesFM
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.27.0-0"
+home: https://github.com/GrowlyX/presage
+sources:
+  - https://github.com/GrowlyX/presage
+keywords:
+  - autoscaling
+  - forecasting
+  - agones
+  - game-servers
+  - timesfm
+  - machine-learning
+maintainers:
+  - name: GrowlyX
+    url: https://github.com/GrowlyX
+annotations:
+  artifacthub.io/category: integration-delivery
+  artifacthub.io/license: Apache-2.0
+  artifacthub.io/operator: "true"
+  artifacthub.io/operatorCapabilities: Basic Install
+  artifacthub.io/prerelease: "true"
+  artifacthub.io/crds: |
+    - kind: PredictiveScaler
+      version: v1alpha1
+      name: predictivescalers.scaling.presage.sh
+      displayName: Predictive Scaler
+      description: |
+        Forecasts a workload's demand and sizes it for the demand expected once
+        new replicas are actually ready, rather than for demand already observed.
+    - kind: ForecastBackend
+      version: v1alpha1
+      name: forecastbackends.scaling.presage.sh
+      displayName: Forecast Backend
+      description: |
+        A cluster-scoped forecasting engine: either a TimesFM model server or the
+        in-process seasonal-naive baseline.
+  artifacthub.io/crdsExamples: |
+    - apiVersion: scaling.presage.sh/v1alpha1
+      kind: ForecastBackend
+      metadata:
+        name: default
+      spec:
+        type: SeasonalNaive
+        seasonalNaive:
+          season: 168h
+          cycles: 3
+    - apiVersion: scaling.presage.sh/v1alpha1
+      kind: PredictiveScaler
+      metadata:
+        name: api
+      spec:
+        mode: Shadow
+        scaleTargetRef:
+          apiVersion: apps/v1
+          kind: Deployment
+          name: api
+        signal:
+          prometheus:
+            address: http://prometheus-operated.monitoring:9090
+            query: sum(rate(http_requests_total{app="api"}[5m]))
+          resolution: 5m
+        leadTime:
+          source: Static
+          static: 90s
+        capacity:
+          perReplica: "250"
+        policy:
+          minReplicas: 2
+          maxReplicas: 50
+          targetQuantile: "0.9"
+  artifacthub.io/links: |
+    - name: source
+      url: https://github.com/GrowlyX/presage
+    - name: TimesFM
+      url: https://github.com/google-research/timesfm
+    - name: Agones FleetAutoscaler
+      url: https://agones.dev/site/docs/reference/fleetautoscaler/

@@ -199,7 +199,28 @@ that is meant to change.
 * [Contributing](CONTRIBUTING.md)
 * [Code of conduct](CODE_OF_CONDUCT.md)
 * [Security policy](SECURITY.md) — report vulnerabilities privately
-* [Discussions](https://github.com/GrowlyX/presage/discussions) for questions
+* [Discussions](https://github.com/breezycourses/presage/discussions) for questions
+
+## Model provenance
+
+presage does not vendor model weights. The TimesFM 2.5 checkpoint is pulled
+from Hugging Face at startup, and the forecaster **pins a revision** by
+default:
+
+```
+google/timesfm-2.5-200m-pytorch @ 1d952420fba87f3c6dee4f240de0f1a0fbc790e3
+```
+
+Verified 2026-09-01: `apache-2.0`, ungated — the same licence as the code, so
+nothing here is encumbered by the weights. Re-check at any time with
+`make check-model-license`, which fails if the licence changes or the
+checkpoint becomes gated.
+
+Pinning is the default because an unpinned model can change under a running
+cluster with no signal at all. Set `PRESAGE_MODEL_REVISION=main` to track
+upstream deliberately. Whichever you choose, the revision that produced a
+forecast is recorded on the `PredictiveScaler` status, so a behaviour change
+that came from the weights can be told apart from one that came from config.
 
 ## Licence
 
