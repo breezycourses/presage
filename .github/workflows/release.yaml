@@ -168,6 +168,13 @@ jobs:
             https://github.com/oras-project/oras/releases/download/v1.2.0/oras_1.2.0_linux_amd64.tar.gz
           tar -xzf oras.tar.gz oras && sudo mv oras /usr/local/bin/
 
+          # oras needs its own login. `helm registry login` writes Helm's
+          # private registry config, which oras does not read, so without this
+          # the push fails with "denied: requested access to the resource is
+          # denied" even though the chart push in the previous step succeeded.
+          echo "${{ secrets.GITHUB_TOKEN }}" |
+            oras login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
+
           oras push \
             ${{ env.REGISTRY }}/${{ github.repository_owner }}/charts/presage:artifacthub.io \
             --config /dev/null:application/vnd.cncf.artifacthub.config.v1+yaml \
