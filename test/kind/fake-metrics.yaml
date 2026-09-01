@@ -1,0 +1,50 @@
+# A Prometheus-shaped endpoint whose value is driven by a ConfigMap, so the
+# test can move "demand" and watch the cluster respond.
+#
+# Deliberately not a real Prometheus: this suite is about whether presage can
+# scale a workload on a live cluster, not about whether Prometheus works.
+#
+# The server image is built from test/kind/fakemetrics at run time. It is not
+# pulled from a registry because kind side-loads with --all-platforms, and a
+# multi-arch image only has this host's blobs locally, so the load fails with
+# "content digest ...: not found". A locally built image is single-platform.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fake-metrics-demand
+  namespace: presage-e2e
+data:
+  demand: "100"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fake-metrics
+  namespace: presage-e2e
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: fake-metrics}}
+  template:
+    metadata: {labels: {app: fake-metrics}}
+    spec:
+      containers:
+        - name: server
+          image: presage-fakemetrics:e2e
+          imagePullPolicy: Never
+          ports: [{containerPort: 9090}]
+          readinessProbe:
+            httpGet: {path: /healthz, port: 9090}
+            periodSeconds: 2
+          volumeMounts:
+            - {name: config, mountPath: /config}
+      volumes:
+        - {name: config, configMap: {name: fake-metrics-demand}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fake-metrics
+  namespace: presage-e2e
+spec:
+  selector: {app: fake-metrics}
+  ports: [{port: 9090, targetPort: 9090}]

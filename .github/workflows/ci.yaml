@@ -48,6 +48,18 @@ jobs:
       - run: go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
       - run: make test-e2e
 
+  kind:
+    # A real cluster with a real kubelet. Slower than envtest and kept to
+    # pushes, but it is the only job that proves the image builds, the RBAC is
+    # right, and the replicas presage asks for actually arrive.
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: helm/kind-action@v1
+        with: {install_only: true}
+      - run: make test-kind
+
   forecaster:
     runs-on: ubuntu-latest
     steps:

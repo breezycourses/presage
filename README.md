@@ -124,8 +124,8 @@ policy.
 
 * No covariates — scheduled events and releases are not fed to the model, and
   that is where the biggest remaining gain is.
-* Never run on a production cluster. It is exercised against a real API server
-  and a real kind cluster in CI, but nobody's players depend on it yet.
+* Never run on a production cluster. It scales a real workload on a real
+  cluster in CI, but nobody's players depend on it yet.
 * No KEDA or HPA adapter. The `scale` subresource covers most of that ground.
 
 On a clean weekly curve, a plain seasonal baseline may match TimesFM — presage

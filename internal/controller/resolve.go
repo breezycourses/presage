@@ -53,6 +53,13 @@ func parseAmount(v *intstr.IntOrString, fallback policy.Amount) (policy.Amount, 
 	case intstr.String:
 		s := strings.TrimSpace(v.StrVal)
 		if !strings.HasSuffix(s, "%") {
+			// A bare string is rejected because "10" and "10%" differ by an
+			// order of magnitude in most realistic configurations -- except
+			// at zero, where they mean the same thing. Refusing "0" there is
+			// pedantry that buys no safety and reads as a bug.
+			if f, err := strconv.ParseFloat(s, 64); err == nil && f == 0 {
+				return policy.Amount{}, nil
+			}
 			return policy.Amount{}, fmt.Errorf(
 				"%q must be a number or a percentage like \"10%%\"", v.StrVal)
 		}

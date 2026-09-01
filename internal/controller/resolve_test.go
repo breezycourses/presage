@@ -25,6 +25,10 @@ func TestParseAmount(t *testing.T) {
 		// "10" and "10%" differ by an order of magnitude in most real configs,
 		// so a bare string must be an error rather than a guess.
 		{"bare string rejected", ptr(intstr.FromString("10")), policy.Amount{}, true},
+		// Except at zero, where both readings agree. A real cluster run
+		// tripped on this: `headroom: "0"` is unambiguous and was rejected.
+		{"bare zero accepted", ptr(intstr.FromString("0")), policy.Amount{}, false},
+		{"bare zero with decimals accepted", ptr(intstr.FromString("0.0")), policy.Amount{}, false},
 		{"garbage rejected", ptr(intstr.FromString("abc%")), policy.Amount{}, true},
 		{"negative rejected", ptr(intstr.FromString("-5%")), policy.Amount{}, true},
 	}
