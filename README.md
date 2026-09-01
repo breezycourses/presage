@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/breezycourses/presage/actions/workflows/ci.yaml"><img src="https://github.com/breezycourses/presage/actions/workflows/ci.yaml/badge.svg" alt="CI"></a>
-  <a href="https://artifacthub.io/packages/helm/presage/presage"><img src="https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/presage" alt="Artifact Hub"></a>
+  <a href="https://artifacthub.io/packages/search?repo=presage"><img src="https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/presage" alt="Artifact Hub"></a>
   <a href="RELEASING.md"><img src="https://img.shields.io/badge/ghcr.io-images-2088FF?logo=github" alt="Container images"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="Apache 2.0"></a>
   <img src="https://img.shields.io/badge/kubernetes-%E2%89%A5%201.27-326ce5?logo=kubernetes&logoColor=white" alt="Kubernetes >= 1.27">

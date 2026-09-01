@@ -6,10 +6,10 @@
 # because that is what the workflow pushes, and so that changing it is a
 # reviewable diff.
 #
-# repositoryID is issued by Artifact Hub when the repository is first added.
-# Until it is filled in, the listing works but cannot be claimed as verified.
-# See RELEASING.md.
-repositoryID: ""
+# Issued by Artifact Hub when the repository was added. This is what proves
+# ownership: Artifact Hub pulls this file from the registry and matches the ID
+# against the repository registered in the control panel.
+repositoryID: 7a2c4545-dcaf-4cfd-8248-9cea1503584e
 owners:
   - name: Subham K.
     email: me@growly.gg
