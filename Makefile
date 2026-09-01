@@ -76,6 +76,10 @@ test-e2e: ## Run the controller e2e suite against a real API server
 test-model-e2e: ## Run the forecaster against the real TimesFM checkpoint (downloads ~1GB)
 	cd forecaster && PRESAGE_E2E=1 uv run --extra torch --extra dev pytest tests/test_real_model.py -v
 
+.PHONY: backtest
+backtest: ## Build the backtest CLI
+	go build -o bin/presage-backtest ./cmd/backtest
+
 .PHONY: branding
 branding: ## Re-render the banner and social images (needs rsvg-convert)
 	node hack/branding/render-social.mjs

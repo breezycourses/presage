@@ -117,6 +117,21 @@ The model is deliberately not on that path. Agones polls every 30 seconds; a
 200M-parameter model there would put its tail latency inside Agones' control
 loop.
 
+### An evaluation harness, not just a claim
+
+`cmd/backtest` replays your own history through the reactive policy, both
+forecast backends, and an oracle with perfect foresight — running the real
+policy engine, not a reimplementation of it.
+
+Its headline is an **iso-cost** comparison, because any strategy can reduce
+unmet demand by provisioning more. The harness bisects the reactive buffer
+until it spends the same as presage, then asks which one is short less often.
+If the answer is "within noise", the report says so and tells you to run the
+cheaper thing.
+
+Lead time is modelled, with replicas arriving as cohorts. Without that a
+reactive strategy looks flawless, and the whole exercise would be theatre.
+
 ### Observability
 
 presage exports what it recommended, what the forecast alone said, what a
@@ -134,6 +149,7 @@ helm install presage oci://ghcr.io/growlyx/charts/presage \
 * [The decision layer](docs/policy.md) — how a forecast becomes a replica count
 * [Architecture](docs/architecture.md) — the pieces and why they are separate
 * [Agones](docs/agones.md) — Fleet autoscaling and the Chain fallback
+* [Backtesting](docs/backtesting.md) — score strategies against your own history
 * [Operations](docs/operations.md) — metrics, alerts, troubleshooting
 * [API reference](docs/api-reference.md) — generated from the CRDs
 * [Examples](examples/)
@@ -169,8 +185,6 @@ day-to-day shape nobody wrote down. They compose in a single `Chain`.
   use the cheap one if it wins. The covariate path (TimesFM's XReg — events,
   releases, streamer traffic) is where the real lift is, and it is not wired
   up yet.
-* **No backtest harness yet.** Evaluating over historical metrics currently
-  means running Shadow mode forward in real time.
 * **Never run on a real cluster.** envtest has no kubelet, so nothing has
   scheduled a pod or measured a true lead time.
 * **Single-signal only.** One PromQL series per scaler.
