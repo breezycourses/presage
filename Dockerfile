@@ -1,6 +1,6 @@
 # Controller image. Distroless and static: the controller talks to the API
 # server and to HTTP endpoints, and needs nothing else.
-FROM golang:1.26 AS build
+FROM golang:1.27 AS build
 WORKDIR /src
 
 COPY go.mod go.sum ./
