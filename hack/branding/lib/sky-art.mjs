@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 // presage's sky, as art that can be rasterised at any size.
 //
 // Structurally a port of the Breezy asset pipeline (packages/assets), with
@@ -14,16 +16,43 @@
 // Requires librsvg (`rsvg-convert`) on PATH. No ImageMagick: nothing here is
 // raster.
 
-/** Top-to-bottom sky. Dark enough that light grey clouds read as clouds. */
+/** Top-to-bottom sky: neutral dark grey, dark enough that light grey clouds
+ *  read as clouds rather than as smudges. Deliberately not blue -- a coloured
+ *  ground competes with the one accent the mark is allowed. */
 export const GRADIENT = [
-  ['0%', '#05070D'],
-  ['28%', '#0A1122'],
-  ['56%', '#111B33'],
-  ['82%', '#18263F'],
-  ['100%', '#1F3050'],
+  ['0%', '#0B0B0C'],
+  ['28%', '#141416'],
+  ['56%', '#1D1E20'],
+  ['82%', '#26282B'],
+  ['100%', '#303236'],
 ];
 
-export const CLOUD_COLOR = '#C7CEDA';
+export const CLOUD_COLOR = '#C9CCD1';
+
+/* The one accent. Kept cool so it separates cleanly from a neutral ground
+ * without the whole image reading as blue. */
+export const ACCENT = '#7FA9F0';
+export const ACCENT_BAND = '#3E62A8';
+
+/* The lettering is Satoshi, pre-outlined into paths by
+ * hack/branding/text-to-paths.py. It is embedded as geometry rather than set
+ * as live text because rsvg-convert cannot be relied on to find a font that is
+ * not installed system-wide -- and on macOS its Pango uses CoreText, which
+ * ignores a scratch FONTCONFIG_FILE *silently* and falls back to Helvetica.
+ * A banner in the wrong typeface that renders without error is a worse
+ * outcome than one that fails loudly.
+ *
+ * The font itself is not vendored here; see hack/branding/README.md. */
+export const LETTERING = JSON.parse(
+  readFileSync(new URL('./lettering.json', import.meta.url), 'utf8'),
+);
+
+/** A pre-outlined text run, placed with its baseline at (x, baseline). */
+function letter(run, x, baseline, pxPerEm, fill) {
+  const s = pxPerEm / run.upem;
+  // Glyph outlines are y-up; SVG is y-down, hence the negative y scale.
+  return `<g transform="translate(${x.toFixed(1)} ${baseline.toFixed(1)}) scale(${s.toFixed(5)} ${(-s).toFixed(5)})" fill="${fill}">${run.glyphs}</g>`;
+}
 
 /* Clouds as fractions of the canvas, so one layout serves every aspect.
  * Kept clear of the middle band: the mark sits there and needs the darkest
@@ -91,7 +120,7 @@ function cloud({ x, y, w, opacity, seed, flip }, index, height) {
  * does as the horizon extends -- the picture is the product's actual claim,
  * not decoration.
  */
-export function forecastMark({ width, height, id = 'mk', stroke = '#7AA7FF', band = '#3B6FD4' }) {
+export function forecastMark({ width, height, id = 'mk', stroke = ACCENT, band = ACCENT_BAND }) {
   const w = width;
   const h = height;
   const n = 64;
@@ -186,28 +215,35 @@ export function build({ width, height, markScale, wordScale, showTagline = true,
   const markH = markW * 0.30;
   const markX = (width - markW) / 2;
 
+  const word = LETTERING.wordmark;
+  const tag = LETTERING.tagline;
+
   const fontSize = width * wordScale;
-  const taglineSize = fontSize * 0.25;
+  const taglineSize = fontSize * 0.235;
+
+  // Real metrics from the outlined runs, so centring is exact rather than an
+  // estimate from a font-size multiplier.
+  const wordWidth = (word.advance * fontSize) / word.upem;
+  const capHeight = (word.capHeight * fontSize) / word.upem;
+  const tagWidth = (tag.advance * taglineSize) / tag.upem;
+  const tagCap = (tag.capHeight * taglineSize) / tag.upem;
 
   /* Measured as a stack and centred as one block. Positioning each element
    * from the canvas centre independently leaves a hole under the mark and
    * pushes the tagline off the bottom edge. */
-  const capHeight = fontSize * 0.72;
   const gapMarkWord = fontSize * 0.34;
-  const gapWordTagline = taglineSize * 1.15;
-  const taglineBlock = showTagline ? gapWordTagline + taglineSize * 0.75 : 0;
+  const gapWordTagline = taglineSize * 1.3;
+  const taglineBlock = showTagline ? gapWordTagline + tagCap : 0;
 
   const stack = markH + gapMarkWord + capHeight + taglineBlock;
   const top = (height - stack) / 2;
 
   const markY = top;
   const wordBaseline = top + markH + gapMarkWord + capHeight;
-  const taglineBaseline = wordBaseline + gapWordTagline + taglineSize * 0.75;
+  const taglineBaseline = wordBaseline + gapWordTagline + tagCap;
 
   const tagline = showTagline
-    ? `<text x="${width / 2}" y="${taglineBaseline.toFixed(1)}" text-anchor="middle"
-             font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="${taglineSize.toFixed(1)}"
-             fill="#8FA3C4" letter-spacing="${(taglineSize * 0.06).toFixed(2)}">forecast-driven autoscaling for Kubernetes and Agones</text>`
+    ? letter(tag, (width - tagWidth) / 2, taglineBaseline, taglineSize, '#9A9DA4')
     : '';
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
@@ -222,10 +258,7 @@ export function build({ width, height, markScale, wordScale, showTagline = true,
       ${forecastMark({ width: markW, height: markH })}
     </svg>
   </g>
-  <text x="${width / 2}" y="${wordBaseline.toFixed(1)}" text-anchor="middle"
-        font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-weight="600"
-        font-size="${fontSize.toFixed(1)}" fill="#F2F5FA"
-        letter-spacing="${(fontSize * 0.02).toFixed(2)}">presage</text>
+  ${letter(word, (width - wordWidth) / 2, wordBaseline, fontSize, '#F4F5F7')}
   ${tagline}
 </svg>`;
 }
