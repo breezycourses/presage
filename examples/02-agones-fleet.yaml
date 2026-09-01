@@ -36,7 +36,7 @@ spec:
       query: |
         sum(agones_fleets_replicas_count{fleet_name="lobby", type="allocated"})
     resolution: 5m
-    history: 14d
+    history: 336h   # 14 days; Go durations have no day unit
 
   leadTime:
     # How long from "decide to scale up" to "a GameServer is Ready". This is

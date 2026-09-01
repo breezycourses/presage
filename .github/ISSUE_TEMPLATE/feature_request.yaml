@@ -1,0 +1,32 @@
+name: Feature request
+description: Propose a change or addition
+labels: [kind/feature]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: |
+        What are you trying to do that presage makes hard or impossible?
+        Describe the situation rather than the solution — the best answer is
+        often not the one either of us thought of first.
+    validations: {required: true}
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you have in mind
+    validations: {required: true}
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you have already tried or ruled out
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope check
+      description: See [GOVERNANCE.md](../../GOVERNANCE.md#project-scope).
+      options:
+        - label: This is about forecasting, scale targets, or the decision layer between them

@@ -1,0 +1,36 @@
+{{- if .Values.agonesWebhook.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "presage.fullname" . }}-webhook
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "presage.labels" . | nindent 4 }}
+  {{- with .Values.agonesWebhook.service.annotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.agonesWebhook.service.type }}
+  # Every replica serves the webhook, not only the leader. A non-leader holds
+  # no cached recommendation and answers 503, which is exactly the signal that
+  # makes an Agones Chain policy fall through to its fallback -- a far better
+  # outcome than a connection refused.
+  selector: {{- include "presage.controllerSelectorLabels" . | nindent 4 }}
+  ports:
+    - {name: webhook, port: {{ .Values.agonesWebhook.port }}, targetPort: webhook}
+{{- end }}
+{{- if .Values.metrics.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "presage.fullname" . }}-metrics
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "presage.labels" . | nindent 4 }}
+  {{- with .Values.metrics.service.annotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  selector: {{- include "presage.controllerSelectorLabels" . | nindent 4 }}
+  ports:
+    - {name: metrics, port: {{ .Values.metrics.port }}, targetPort: metrics}
+{{- end }}
