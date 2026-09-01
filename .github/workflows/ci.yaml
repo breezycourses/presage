@@ -10,7 +10,7 @@ jobs:
   go:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with: {go-version: 'stable', cache: true}
       - run: go vet ./...
@@ -32,7 +32,7 @@ jobs:
     # release, which is how this check came to exist.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with: {go-version: 'stable', cache: true}
       - run: go install golang.org/x/vuln/cmd/govulncheck@latest
@@ -43,7 +43,7 @@ jobs:
     # bug: the CRD would reject fields the controller reads.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with: {go-version: 'stable', cache: true}
       - uses: astral-sh/setup-uv@v5
@@ -62,7 +62,7 @@ jobs:
     # the Agones webhook against the store the reconciler actually writes to.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with: {go-version: 'stable', cache: true}
       - run: go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
@@ -75,7 +75,7 @@ jobs:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: helm/kind-action@v1
         with: {install_only: true}
       - run: make test-kind
@@ -83,7 +83,7 @@ jobs:
   forecaster:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v5
       - run: uv run --extra dev pytest -q
         working-directory: forecaster
@@ -96,6 +96,6 @@ jobs:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v5
       - run: make test-model-e2e
