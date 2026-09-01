@@ -1,0 +1,29 @@
+version: 2
+updates:
+  # The x/net, x/text and x/sys advisories that prompted this were all
+  # transitive, arriving through client-go and prometheus. Nothing in the
+  # repository would have surfaced them until a registry scan after release.
+  - package-ecosystem: gomod
+    directory: /
+    schedule: {interval: weekly}
+    open-pull-requests-limit: 5
+    groups:
+      # One PR for the golang.org/x family: they move together and their
+      # version constraints reference each other, so splitting them produces
+      # pull requests that cannot merge independently.
+      golang-x:
+        patterns: ["golang.org/x/*"]
+      kubernetes:
+        patterns: ["k8s.io/*", "sigs.k8s.io/*"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: {interval: weekly}
+
+  # Base images for the controller and the forecaster.
+  - package-ecosystem: docker
+    directory: /
+    schedule: {interval: weekly}
+  - package-ecosystem: docker
+    directory: /forecaster
+    schedule: {interval: weekly}
