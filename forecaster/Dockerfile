@@ -3,7 +3,7 @@
 # The CPU torch wheel is installed explicitly: the default index resolves to a
 # CUDA build that is several gigabytes larger and useless on a CPU-only node.
 # Override PRESAGE_TORCH_INDEX to build a GPU image.
-FROM python:3.12-slim AS build
+FROM python:3.14-slim AS build
 
 ARG PRESAGE_TORCH_INDEX=https://download.pytorch.org/whl/cpu
 
@@ -21,7 +21,7 @@ COPY pyproject.toml README.md ./
 COPY presage_forecaster/ presage_forecaster/
 RUN pip install '.[torch]'
 
-FROM python:3.12-slim
+FROM python:3.14-slim
 ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     HF_HOME=/cache/huggingface
