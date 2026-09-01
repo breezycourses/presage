@@ -1,0 +1,10 @@
+# Artifact Hub repository metadata.
+#
+# Artifact Hub looks for this file at the root of the chart repository to
+# verify ownership. The repositoryID is issued by Artifact Hub when the
+# repository is first registered; until then it is empty and the repo is
+# simply unverified rather than broken.
+repositoryID: ""
+owners:
+  - name: GrowlyX
+    email: me@growly.gg

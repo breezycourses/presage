@@ -21,6 +21,17 @@ def _env_int(name: str, default: int) -> int:
         raise ValueError(f"{name} must be an integer, got {raw!r}") from exc
 
 
+def _env_optional_str(name: str, default: str | None) -> str | None:
+    """Read a string, treating the literal "main" as "do not pin"."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    raw = raw.strip()
+    if raw == "" or raw == "main":
+        return None
+    return raw
+
+
 def _env_bool(name: str, default: bool) -> bool:
     raw = os.environ.get(name)
     if raw is None or raw == "":
@@ -33,6 +44,12 @@ class Config:
     """Forecaster configuration."""
 
     model: str = "google/timesfm-2.5-200m-pytorch"
+
+    # Hugging Face revision to load. Unset means "whatever main points at
+    # today", which makes the deployment irreproducible and lets the weights
+    # change under a running cluster without any signal. Pinning is the
+    # default; override with PRESAGE_MODEL_REVISION to track main deliberately.
+    model_revision: str | None = "1d952420fba87f3c6dee4f240de0f1a0fbc790e3"
 
     # Compiled input/output sizes. Together with the caller's sample
     # resolution these decide how far back the model sees and how far ahead it
@@ -65,6 +82,7 @@ class Config:
     def from_env(cls) -> "Config":
         return cls(
             model=os.environ.get("PRESAGE_MODEL", cls.model),
+            model_revision=_env_optional_str("PRESAGE_MODEL_REVISION", cls.model_revision),
             max_context=_env_int("PRESAGE_MAX_CONTEXT", cls.max_context),
             max_horizon=_env_int("PRESAGE_MAX_HORIZON", cls.max_horizon),
             use_quantile_head=_env_bool("PRESAGE_USE_QUANTILE_HEAD", cls.use_quantile_head),
