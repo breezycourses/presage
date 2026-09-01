@@ -18,6 +18,32 @@ go run ./cmd/backtest \
 Omit `-timesfm` to compare only the in-process baseline, which needs no model
 server.
 
+## What it produces
+
+Charts, rendered straight from the run:
+
+![Provisioned capacity against demand](assets/backtest-timeline.svg)
+
+The full window shows every strategy tracking the daily cycle. The interesting
+part is closer up, where you can see *when* each one moved:
+
+![The last three days](assets/backtest-timeline-zoom.svg)
+
+And the trade-off, which is the only honest way to compare autoscalers — every
+strategy can improve one axis by giving up the other, so what matters is where
+each lands:
+
+![Cost against service quality](assets/backtest-tradeoff.svg)
+
+PDF versions sit alongside each SVG for print and slides
+([timeline](assets/backtest-timeline.pdf),
+[zoom](assets/backtest-timeline-zoom.pdf),
+[trade-off](assets/backtest-tradeoff.pdf)). All of them carry outlined text
+rather than live fonts, so they render identically wherever they are opened.
+
+Regenerate with `make backtest-charts` (add `make backtest-charts-pdf` for the
+PDFs). The demo signal is seeded, so the figures are reproducible.
+
 ## What it compares
 
 | Strategy | What it is |
