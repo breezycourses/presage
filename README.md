@@ -1,161 +1,153 @@
-# presage
+<p align="center">
+  <img src="docs/assets/banner.png" alt="presage — forecast-driven autoscaling for Kubernetes and Agones" width="100%">
+</p>
 
-Forecast-driven autoscaling for Kubernetes and [Agones](https://agones.dev),
-using [TimesFM](https://github.com/google-research/timesfm) — Google Research's
-open time-series foundation model — with no per-cluster training.
+<p align="center">
+  <a href="https://github.com/GrowlyX/presage/actions/workflows/ci.yaml"><img src="https://github.com/GrowlyX/presage/actions/workflows/ci.yaml/badge.svg" alt="CI"></a>
+  <a href="https://artifacthub.io/packages/helm/presage/presage"><img src="https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/presage" alt="Artifact Hub"></a>
+  <a href="https://goreportcard.com/report/github.com/GrowlyX/presage"><img src="https://goreportcard.com/badge/github.com/GrowlyX/presage" alt="Go Report Card"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="Apache 2.0"></a>
+  <img src="https://img.shields.io/badge/kubernetes-%E2%89%A5%201.27-326ce5?logo=kubernetes&logoColor=white" alt="Kubernetes >= 1.27">
+  <img src="https://img.shields.io/badge/status-alpha-orange.svg" alt="Alpha">
+</p>
+
+presage is an autoscaler that provisions for the demand a workload will have
+**once new replicas are actually ready**, rather than for demand it has already
+observed. It reads a time series from any Prometheus-compatible store,
+forecasts it with [TimesFM](https://github.com/google-research/timesfm) —
+Google Research's open time-series foundation model, used zero-shot with no
+per-cluster training — and turns the resulting predictive distribution into a
+replica count.
+
+It drives anything exposing the Kubernetes `scale` subresource, and it drives
+[Agones](https://agones.dev) Fleets through the `FleetAutoscaler` webhook,
+where Agones remains the sole writer of Fleet replicas.
 
 > **Status: alpha.** The API is `v1alpha1` and will change. Every
 > `PredictiveScaler` defaults to `Shadow` mode, which publishes a
 > recommendation and changes nothing. That is the intended way to adopt it.
 
-## The problem
+## Why
 
 A reactive autoscaler observes demand at time *T* and starts a replica that
 becomes useful at *T + lead*. It is therefore **structurally always one lead
-time behind**. When lead time is a second, nobody notices. When it is two
-minutes — a JVM game server loading a world, a model server pulling weights, a
-pod waiting on a warm cache — every demand ramp is served late by construction,
-and the usual fix is to permanently over-provision until the lateness stops
-hurting.
+time behind**.
 
-presage forecasts demand **at** *T + lead* and provisions for that instead.
+When lead time is a second, nobody notices. When it is two minutes — a JVM
+game server loading a world, a model server pulling weights, a pod waiting on
+a warm cache — every demand ramp is served late by construction, and the usual
+fix is to over-provision permanently until the lateness stops hurting.
+
+presage forecasts demand **at** *T + lead* and sizes for that instead.
 
 ```
         demand
           │                    ╭─────  actual
           │                ╭───╯
           │            ╭───╯
-          │        ╭───╯    ← reactive scaler is still here
+          │        ╭───╯    ← a reactive scaler is still here
           │    ╭───╯
           └────┴───────┴───────────────▶ time
                T      T+lead
                  └─ presage sizes for this point
 ```
 
-## How it works
+## Functionality overview
 
-```
- PredictiveScaler (CRD)
-        │
-        ├── signal ──────▶ Prometheus / Thanos / Mimir / VictoriaMetrics
-        │                  range query → evenly spaced series
-        │
-        ├── forecast ────▶ ForecastBackend
-        │                    • TimesFM 2.5 (200M, zero-shot, quantile head)
-        │                    • SeasonalNaive (in-process baseline)
-        │
-        ├── policy ──────▶ quantile → replicas, reactive floor,
-        │                  uncertainty guard, stabilization, rate limits
-        │
-        └── target ──────▶ • any `scale` subresource (Deployment, …)
-                           • Agones Fleet, via the FleetAutoscaler webhook
-```
+### Forecasting, without training anything
 
-## Quickstart
+TimesFM 2.5 is used zero-shot: it has seen enough time series that it
+forecasts an unfamiliar one directly, so there is no training pipeline, no
+per-workload model, and nothing to retrain when traffic shifts. The 30M
+continuous quantile head gives a **predictive distribution** rather than a
+point estimate, which is what makes a risk-based scaling policy possible at
+all.
 
-```bash
-kubectl apply -k config
-kubectl apply -f examples/00-forecastbackend-seasonal-naive.yaml
-kubectl apply -f examples/03-deployment.yaml
-```
+The checkpoint revision is pinned by default, and the revision that produced
+a forecast is recorded on the object — so a behaviour change that came from
+the weights can be told apart from one that came from configuration.
 
-That runs with **no model server** — `SeasonalNaive` forecasts in-process. Add
-TimesFM when you have evidence it beats the baseline on your workload:
+### A baseline in the box
 
-```bash
-kubectl apply -f examples/01-forecastbackend-timesfm.yaml
-```
-
-Then watch the recommendation against reality:
-
-```
-presage_recommended_replicas   # what presage would do
-presage_current_replicas       # what is actually running
-presage_predictive_replicas    # the forecast's unconstrained opinion
-presage_reactive_replicas      # what a plain buffer policy would have chosen
-```
-
-Flip `mode: Enforce` when the first line has looked right for a few weeks —
-including at least one weekend.
-
-## Agones
-
-Agones stays the only writer of Fleet replicas. presage answers the
-`FleetAutoscaler` webhook Agones already polls, from a cached recommendation.
-
-The important part is the `Chain` policy:
-
-```yaml
-policy:
-  type: Chain
-  chain:
-    - id: predictive
-      type: Webhook
-      webhook:
-        service: {name: presage-webhook, namespace: presage-system, path: /scale/default/lobby}
-    - id: fallback
-      type: Buffer
-      buffer: {bufferSize: 2, minReplicas: 3, maxReplicas: 40}
-```
-
-When presage is down, wedged, in `Shadow` mode, still cold-starting, or holding
-a recommendation older than `maxRecommendationAge`, the webhook returns an
-**error** — and Agones falls through to plain buffer autoscaling. Returning a
-well-formed "don't scale" would be worse: Agones would treat it as an
-authoritative decision and the fallback would never run.
-
-The model is deliberately **not** on this path. Agones polls every 30s; a
-200M-parameter model there would put its tail latency inside Agones' control
-loop. The controller refreshes forecasts on its own slower cadence.
-
-See [examples/02-agones-fleet.yaml](examples/02-agones-fleet.yaml).
-
-## Design decisions
-
-**One quantile sets capacity.** An earlier revision used a dead band between
-p50 and p90 and only acted outside it. That is backwards: it makes a *more
-uncertain* forecast produce *less* movement, and it silently suppresses
-scale-ups, defeating the lead-time protection that justifies forecasting at
-all. Capacity now tracks `targetQuantile` alone, so wider uncertainty means a
-fatter upper tail means more capacity. Uncertainty should buy headroom, not
-hesitation.
-
-**The lower quantile guards scale-downs, nothing else.** Releasing capacity is
-the expensive direction to be wrong in, so it is gated on the forecast being
-confident: if `(p90 − p50) / max(p50, 1)` exceeds `maxRelativeSpread`, the
-scale-down is refused. Adding capacity is never gated this way.
-
-**The reactive floor makes forecast error one-directional.** A conventional
-buffer computation runs alongside the forecast and lower-bounds the result. With
-it enabled, a badly wrong forecast can only ever *over*-provision — which makes
-presage strictly safer than the reactive policy it replaces, and is why it is on
-by default. (`maxReplicas` and `maxScaleUpRate` remain hard limits and can bind
-below the floor; the floor removes forecast error as a cause of
-under-provisioning, not operator-configured limits.)
-
-**A baseline ships in the box.** `SeasonalNaive` is not a placeholder. On clean
+`SeasonalNaive` runs in the controller process: no model server, no
+accelerator, no checkpoint download. It is not a placeholder. On clean
 weekly-seasonal traffic — which describes most player-facing load — it is a
 hard baseline, and a foundation model that cannot beat it on your workload is
-not earning its inference cost there. Both backends sit behind the same
-interface so that comparison is a one-line config change.
+not earning its inference cost there.
 
-**Shadow by default.** A forecasting autoscaler that cannot be evaluated before
-it is trusted will not be trusted.
+Both backends sit behind one interface, so that comparison is a config change
+rather than a project. A forecasting project that cannot measure itself
+against a baseline cannot tell improvement from noise.
 
-## Resolution is the tuning knob
+### A decision layer with explicit safety properties
 
-TimesFM sees a fixed number of *points*, so the signal resolution decides how
-far back it can look:
+A forecast is not a replica count. The layer between them is where presage's
+opinions live, and they are deliberate:
 
-| Resolution | 4096 points | 16384 points (2.5 max) |
-| --- | --- | --- |
-| 1m | ~2.8 days | ~11 days |
-| 5m | **~14 days** | ~57 days |
-| 15m | ~43 days | ~170 days |
+* **One quantile sets capacity**, in both directions. A more uncertain
+  forecast has a fatter upper tail and therefore provisions *more*.
+  Uncertainty should buy headroom, not hesitation.
+* **The lower quantile only guards scale-downs.** Releasing capacity is the
+  expensive direction to be wrong in, so it is gated on the forecast being
+  confident. Adding capacity never is.
+* **The reactive floor makes forecast error one-directional.** A conventional
+  buffer computation runs alongside the forecast and lower-bounds the result,
+  so a badly wrong forecast can only ever *over*-provision. That makes presage
+  strictly safer than the reactive policy it replaces.
+* **Shadow mode is the default.** A forecasting autoscaler that cannot be
+  evaluated before it is trusted will not be trusted.
 
-Weekly seasonality needs at least two or three weeks in view. **5m is the right
-default** for most workloads; 1m looks higher-fidelity and quietly throws away
-the weekly signal.
+Every recommendation reports the constraint that bound it, so "why did it pick
+that number" is answered by `kubectl describe` rather than by reading logs.
+
+### Agones, with a fallback that actually fires
+
+presage never writes Fleet replicas. It answers the `FleetAutoscaler` webhook
+Agones already polls, from a cached recommendation, and returns an **error**
+whenever it cannot speak authoritatively — cold start, stale forecast, Shadow
+mode, deleted scaler, or a non-leader replica.
+
+That matters because of the `Chain` policy: an error makes Agones fall through
+to a plain `Buffer` entry. A well-formed "don't scale" would be worse — Agones
+would treat it as authoritative and the fallback would never run. So the
+failure mode of a presage outage is *the Fleet reverts to buffer autoscaling*,
+not *the Fleet freezes*.
+
+The model is deliberately not on that path. Agones polls every 30 seconds; a
+200M-parameter model there would put its tail latency inside Agones' control
+loop.
+
+### Observability
+
+presage exports what it recommended, what the forecast alone said, what a
+reactive policy would have said, and which constraint bound the result — so
+Shadow mode is genuinely evaluable rather than a promise.
+
+## Getting started
+
+```bash
+helm install presage oci://ghcr.io/growlyx/charts/presage \
+  --namespace presage-system --create-namespace
+```
+
+* [Getting started](docs/getting-started.md) — install, run in Shadow, decide
+* [The decision layer](docs/policy.md) — how a forecast becomes a replica count
+* [Architecture](docs/architecture.md) — the pieces and why they are separate
+* [Agones](docs/agones.md) — Fleet autoscaling and the Chain fallback
+* [Operations](docs/operations.md) — metrics, alerts, troubleshooting
+* [API reference](docs/api-reference.md) — generated from the CRDs
+* [Examples](examples/)
+
+## Compatibility
+
+| | |
+| --- | --- |
+| Kubernetes | ≥ 1.27 |
+| Agones | ≥ 1.30 (`Chain` policy); the webhook alone works with any version supporting `Webhook` |
+| Metrics | Prometheus, Thanos, Mimir, Cortex, VictoriaMetrics |
+| Model | TimesFM 2.5 (200M), pinned revision, Apache-2.0 |
+
+Images are published for `linux/amd64` and `linux/arm64`.
 
 ## Prior art
 
@@ -167,61 +159,47 @@ the weekly signal.
 | **presage** | TimesFM 2.5, zero-shot | **yes** | **yes** | **yes** |
 
 Agones' own `Schedule` policy already covers *known* recurring events you write
-down by hand. presage covers the drift, the growth trend, and the day-to-day
-shape you did not.
-
-## Testing
-
-```bash
-make verify           # vet, gofmt, unit tests (-race), forecaster tests, example schemas
-make test-e2e         # controller against a real apiserver + etcd (envtest)
-make test-model-e2e   # forecaster against the real TimesFM checkpoint (~1GB)
-```
-
-`make test-e2e` runs the controller against a real API server and covers what
-unit tests structurally cannot — every component's unit tests build their fakes
-from the same assumptions the production code makes, so they can agree with
-each other and all be wrong together. It asserts:
-
-- Shadow mode publishes a recommendation and provably does not scale
-- Enforce mode scales a real Deployment through the `scale` subresource
-- the reactive floor holds when the forecast is badly wrong (quiet a season
-  ago, busy now) and the constraint is reported as `ReactiveFloor`
-- presage never writes Agones `Fleet.spec.replicas`, and the webhook serves
-  the recommendation the reconciler published
-- Shadow mode makes the Agones webhook refuse, so a Chain policy falls through
-- deleting a scaler stops the webhook immediately and releases the finalizer
-- a misconfiguration surfaces on the object, and a failing scaler leaves the
-  target untouched
-- a mostly-gap-filled signal is refused rather than forecast from
-
-`make test-model-e2e` is the only test that can catch TimesFM changing its
-output layout. It asserts the block is `(batch, horizon, 10)`, that the deciles
-are ordered, that **the point forecast coincides with column 5** (the median —
-any reordering breaks this immediately), and that the p10–p90 spread widens
-with input noise rather than being a constant.
+down by hand, and is better than a forecast for those — a scheduled event is a
+fact, not a prediction. presage covers the drift, the growth trend, and the
+day-to-day shape nobody wrote down. They compose in a single `Chain`.
 
 ## Honest limitations
 
-- **Zero-shot may only tie the baseline** on a clean weekly curve. Run both,
-  compare, and use the cheap one if it wins. The covariate path (TimesFM's
-  XReg — events, releases, streamer traffic) is where the real lift is, and it
-  is not wired up yet.
-- **No backtest harness yet.** Evaluating over historical metrics currently
-  means running `Shadow` mode forward in real time.
-- **Never run on a real cluster.** envtest has no kubelet, so nothing has
+* **Zero-shot may only tie the baseline** on a clean weekly curve. Run both and
+  use the cheap one if it wins. The covariate path (TimesFM's XReg — events,
+  releases, streamer traffic) is where the real lift is, and it is not wired
+  up yet.
+* **No backtest harness yet.** Evaluating over historical metrics currently
+  means running Shadow mode forward in real time.
+* **Never run on a real cluster.** envtest has no kubelet, so nothing has
   scheduled a pod or measured a true lead time.
-- **Single-signal only.** One PromQL series per scaler.
-- **KEDA and HPA adapters are not implemented.** The `scale` subresource path
+* **Single-signal only.** One PromQL series per scaler.
+* **KEDA and HPA adapters are not implemented.** The `scale` subresource path
   covers most of what they would.
 
 ## Development
 
 ```bash
-make verify          # vet, gofmt, Go tests, forecaster tests
-make generate        # regenerate deepcopy, CRDs, RBAC
-make validate-examples
+make verify           # vet, gofmt, unit tests (-race), forecaster, examples, chart
+make test-e2e         # controller against a real apiserver + etcd (envtest)
+make test-model-e2e   # forecaster against the real TimesFM checkpoint (~1GB)
 ```
+
+There are three test layers because they catch different things, and the e2e
+layers exist because unit tests across packages share assumptions and can be
+wrong together. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Community
+
+presage is early and has one maintainer. Issues and pull requests are the way
+to reach it; see [MAINTAINERS.md](MAINTAINERS.md) and
+[GOVERNANCE.md](GOVERNANCE.md) for what that means in practice, including how
+that is meant to change.
+
+* [Contributing](CONTRIBUTING.md)
+* [Code of conduct](CODE_OF_CONDUCT.md)
+* [Security policy](SECURITY.md) — report vulnerabilities privately
+* [Discussions](https://github.com/breezycourses/presage/discussions) for questions
 
 ## Model provenance
 
@@ -246,5 +224,8 @@ that came from the weights can be told apart from one that came from config.
 
 ## Licence
 
-Apache-2.0. TimesFM is a separate project, also Apache-2.0, and is not vendored
-here.
+Apache-2.0. See [LICENSE](LICENSE).
+
+TimesFM is a separate project, also Apache-2.0, and is not vendored here — the
+checkpoint is pulled at runtime from a pinned revision. See
+[docs/architecture.md](docs/architecture.md) for what that means operationally.
