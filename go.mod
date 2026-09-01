@@ -1,4 +1,4 @@
-module github.com/GrowlyX/presage
+module github.com/breezycourses/presage
 
 go 1.26.0
 

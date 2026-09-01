@@ -19,7 +19,7 @@ Nothing is being autoscaled yet. Two objects are needed:
      YAML
 
 2. A PredictiveScaler for a workload. See:
-     https://github.com/GrowlyX/presage/tree/main/examples
+     https://github.com/breezycourses/presage/tree/main/examples
 
 Every PredictiveScaler defaults to mode: Shadow, which publishes a
 recommendation and changes nothing. Compare it against reality first:

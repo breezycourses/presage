@@ -9,7 +9,7 @@ reading that first will save you time on anything touching the policy engine.
 You need Go 1.25+, [uv](https://docs.astral.sh/uv/), Helm, and Docker.
 
 ```bash
-git clone https://github.com/GrowlyX/presage.git
+git clone https://github.com/breezycourses/presage.git
 cd presage
 go install sigs.k8s.io/controller-tools/cmd/controller-gen@v0.19.0
 go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
@@ -94,6 +94,10 @@ public issue.
 Open an issue before the pull request for anything that changes the
 `v1alpha1` API, the default behaviour of the policy engine, or the safety
 properties in the README. Those are expensive to reverse once deployed.
+
+## Releasing
+
+See [RELEASING.md](RELEASING.md).
 
 ## Licence
 

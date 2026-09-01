@@ -6,8 +6,8 @@ import (
 	"math"
 	"time"
 
-	"github.com/GrowlyX/presage/internal/forecast"
-	"github.com/GrowlyX/presage/internal/policy"
+	"github.com/breezycourses/presage/internal/forecast"
+	"github.com/breezycourses/presage/internal/policy"
 )
 
 // Static holds a fixed replica count: the "what we do today" baseline for

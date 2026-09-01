@@ -13,8 +13,8 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/GrowlyX/presage/api/v1alpha1"
-	"github.com/GrowlyX/presage/internal/agones"
+	"github.com/breezycourses/presage/api/v1alpha1"
+	"github.com/breezycourses/presage/internal/agones"
 )
 
 // Target reads and writes a workload's replica count.

@@ -3,7 +3,7 @@
 ## Install
 
 ```bash
-helm install presage oci://ghcr.io/growlyx/charts/presage \
+helm install presage oci://ghcr.io/breezycourses/charts/presage \
   --namespace presage-system --create-namespace
 ```
 

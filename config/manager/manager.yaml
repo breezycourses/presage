@@ -18,7 +18,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: manager
-          image: ghcr.io/growlyx/presage:dev
+          image: ghcr.io/breezycourses/presage:dev
           args:
             - --leader-elect
             - --agones-webhook

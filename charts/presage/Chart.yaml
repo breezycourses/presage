@@ -5,9 +5,12 @@ type: application
 version: 0.1.0
 appVersion: "0.1.0"
 kubeVersion: ">=1.27.0-0"
-home: https://github.com/GrowlyX/presage
+home: https://github.com/breezycourses/presage
+# Rendered on the Artifact Hub listing. Must be a URL Artifact Hub can reach,
+# so it only resolves once the repository is public.
+icon: https://raw.githubusercontent.com/breezycourses/presage/main/docs/assets/og-square.png
 sources:
-  - https://github.com/GrowlyX/presage
+  - https://github.com/breezycourses/presage
 keywords:
   - autoscaling
   - forecasting
@@ -18,6 +21,7 @@ keywords:
 maintainers:
   - name: GrowlyX
     url: https://github.com/GrowlyX
+    email: me@growly.gg
 annotations:
   artifacthub.io/category: integration-delivery
   artifacthub.io/license: Apache-2.0
@@ -75,7 +79,7 @@ annotations:
           targetQuantile: "0.9"
   artifacthub.io/links: |
     - name: source
-      url: https://github.com/GrowlyX/presage
+      url: https://github.com/breezycourses/presage
     - name: TimesFM
       url: https://github.com/google-research/timesfm
     - name: Agones FleetAutoscaler

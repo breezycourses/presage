@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/GrowlyX/presage/internal/policy"
+	"github.com/breezycourses/presage/internal/policy"
 )
 
 // IsoCost is a reactive baseline tuned to spend the same as another strategy.
