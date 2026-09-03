@@ -103,8 +103,8 @@ persistent cache volume to avoid re-downloading on every restart.
 Helm does not upgrade CRDs. After a chart upgrade that changes the API:
 
 ```bash
-kubectl apply -f https://raw.githubusercontent.com/GrowlyX/presage/v0.1.0/config/crd/scaling.presage.sh_predictivescalers.yaml
-kubectl apply -f https://raw.githubusercontent.com/GrowlyX/presage/v0.1.0/config/crd/scaling.presage.sh_forecastbackends.yaml
+kubectl apply -f https://raw.githubusercontent.com/breezycourses/presage/v0.1.0/config/crd/scaling.presage.sh_predictivescalers.yaml
+kubectl apply -f https://raw.githubusercontent.com/breezycourses/presage/v0.1.0/config/crd/scaling.presage.sh_forecastbackends.yaml
 ```
 
 ## Turning it off safely
