@@ -78,6 +78,13 @@ class Config:
     host: str = "0.0.0.0"
     port: int = 8080
 
+    # Seconds to wait for the model to load before the process exits.
+    # A 200M-parameter model takes tens of seconds over a fast network;
+    # setting this low on a slow connection or behind a proxy will cause
+    # premature exit. The default is generous so the first cold start on a
+    # fresh node does not loop-restart before the checkpoint arrives.
+    load_timeout_seconds: float = 300.0
+
     @classmethod
     def from_env(cls) -> "Config":
         return cls(
@@ -96,6 +103,9 @@ class Config:
             ),
             max_batch=_env_int("PRESAGE_MAX_BATCH", cls.max_batch),
             max_total_points=_env_int("PRESAGE_MAX_TOTAL_POINTS", cls.max_total_points),
+            load_timeout_seconds=float(
+                os.environ.get("PRESAGE_LOAD_TIMEOUT_SECONDS", str(cls.load_timeout_seconds))
+            ),
             host=os.environ.get("PRESAGE_HOST", cls.host),
             port=_env_int("PRESAGE_PORT", cls.port),
         )

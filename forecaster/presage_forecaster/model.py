@@ -57,6 +57,7 @@ class TimesFMModel:
         self._model = None
         self._ready = False
         self._load_error: str | None = None
+        self._done = threading.Event()
 
     @property
     def ready(self) -> bool:
@@ -67,6 +68,10 @@ class TimesFMModel:
         return self._load_error
 
     @property
+    def done_event(self) -> threading.Event:
+        return self._done
+
+    @property
     def name(self) -> str:
         return self._cfg.model
 
@@ -75,7 +80,11 @@ class TimesFMModel:
         return self._cfg.model_revision
 
     def load(self) -> None:
-        """Load and compile the model. Safe to call once, at startup."""
+        """Load and compile the model. Safe to call once, at startup.
+
+        Sets ``_done`` on completion -- success *or* failure -- so that a
+        monitoring loop can reliably detect when this thread finishes.
+        """
         cfg = self._cfg
         try:
             import timesfm  # imported lazily so config errors surface first
@@ -113,6 +122,8 @@ class TimesFMModel:
         except Exception as exc:  # noqa: BLE001 - surfaced via /readyz
             self._load_error = f"{type(exc).__name__}: {exc}"
             log.exception("failed to load model")
+        finally:
+            self._done.set()
 
     def forecast(
         self,
