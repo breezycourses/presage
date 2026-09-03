@@ -109,6 +109,15 @@ var (
 		Name: "presage_signal_gap_steps",
 		Help: "Number of steps in the last signal query that were gap-filled.",
 	}, []string{"namespace", "name", "signal"})
+
+	// CrossingQuantilesTotal counts how many times a signal's upper quantile
+	// was below the lower quantile. A single occurrence is a data oddity;
+	// repeated occurrences mean a backend is producing garbage and every
+	// forecast should be treated as suspect.
+	CrossingQuantilesTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "presage_crossing_quantiles_total",
+		Help: "Number of times quantile crossing was detected per signal.",
+	}, []string{"namespace", "name", "signal"})
 )
 
 // Forget drops every series for a scaler, so a deleted PredictiveScaler stops
@@ -133,5 +142,6 @@ func init() {
 		ForecastValue, SignalValue, LeadTimeSeconds,
 		ConstraintTotal, ReconcileTotal, ScaleTotal,
 		ForecastDuration, ForecastErrorTotal, WebhookTotal, SignalGaps,
+		CrossingQuantilesTotal,
 	)
 }

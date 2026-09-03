@@ -166,6 +166,15 @@ type Decision struct {
 	// evaluation. Nil means "not currently a scale-down candidate".
 	ScaleDownCandidateSince *time.Time
 
+	// CrossingSignals lists every signal whose ForecastUp was below
+	// ForecastDown (quantile crossing).  The evaluation still proceeds,
+	// swapping the two so the policy never inverts -- but the fact of
+	// crossing is the only signal the controller has that a backend may be
+	// producing garbage, and it should show up in metrics.
+	//
+	// Empty means every signal was well-formed.
+	CrossingSignals []string
+
 	// Explain is a short human-readable trace of how Replicas was reached.
 	Explain string
 }
@@ -211,6 +220,7 @@ func Evaluate(cfg Config, in Input) (Decision, error) {
 		binding    string
 		bindingUp  float64
 		bindingLow float64
+		crossing   []string
 	)
 	for _, sig := range in.Signals {
 		if sig.PerReplica <= 0 || math.IsNaN(sig.PerReplica) || math.IsInf(sig.PerReplica, 0) {
@@ -220,11 +230,10 @@ func Evaluate(cfg Config, in Input) (Decision, error) {
 			return Decision{}, fmt.Errorf("%w: signal %q", ErrInvalidForecast, sig.Name)
 		}
 
-		// Defensive: quantile crossing. TimesFM can be asked to fix this
-		// itself, but a backend that does not must never invert the policy.
 		up, down := math.Max(sig.ForecastUp, 0), math.Max(sig.ForecastDown, 0)
 		if up < down {
 			up, down = down, up
+			crossing = append(crossing, sig.Name)
 		}
 
 		need := replicasFor(cfg, up, sig.PerReplica)
@@ -237,6 +246,9 @@ func Evaluate(cfg Config, in Input) (Decision, error) {
 	constraint := ConstraintNone
 	explain := fmt.Sprintf("signal %q forecast q_target=%.2f -> %d replicas (current %d)",
 		binding, bindingUp, target, current)
+	if len(crossing) > 0 {
+		explain += fmt.Sprintf("; quantile crossing detected on signals: %v", crossing)
+	}
 	up, down := bindingUp, bindingLow
 
 	// Step 2: reactive floor, taken across every signal for the same reason
@@ -335,6 +347,7 @@ func Evaluate(cfg Config, in Input) (Decision, error) {
 		Reactive:                reactive,
 		Constraint:              constraint,
 		BindingSignal:           binding,
+		CrossingSignals:         crossing,
 		ScaleDownCandidateSince: candidateSince,
 		Explain:                 explain,
 	}, nil
