@@ -20,6 +20,7 @@ All exported on the controller's `:8080/metrics`.
 | `presage_forecast_duration_seconds` | histogram | Backend latency |
 | `presage_forecast_errors_total` | counter | Forecast failures, by backend |
 | `presage_agones_webhook_requests_total` | counter | Webhook requests, by outcome |
+| `presage_crossing_quantiles_total` | counter | Quantile crossing detected, by signal |
 
 ## The two questions worth alerting on
 

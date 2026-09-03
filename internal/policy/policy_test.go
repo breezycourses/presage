@@ -361,6 +361,24 @@ func TestEvaluate_QuantileCrossingIsCorrected(t *testing.T) {
 	if got.Replicas != 15 {
 		t.Fatalf("expected the larger value to drive scale-up (15), got %d (%s)", got.Replicas, got.Explain)
 	}
+	// Crossing must be visible in the decision so callers can surface it.
+	if len(got.CrossingSignals) != 1 || got.CrossingSignals[0] != "demand" {
+		t.Fatalf("expected crossing signal [demand], got %v", got.CrossingSignals)
+	}
+}
+
+func TestEvaluate_NoCrossingWhenQuantilesAreOrdered(t *testing.T) {
+	cfg := baseConfig()
+	in := baseInput()
+	setForecast(&in, 50, 100)
+
+	got, err := Evaluate(cfg, in)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got.CrossingSignals) != 0 {
+		t.Fatalf("expected no crossing signals, got %v", got.CrossingSignals)
+	}
 }
 
 func TestEvaluate_NegativeForecastClampedToZero(t *testing.T) {

@@ -292,6 +292,10 @@ func (r *PredictiveScalerReconciler) evaluate(ctx context.Context, ps *v1alpha1.
 		return err
 	}
 
+	for _, sig := range decision.CrossingSignals {
+		obs.CrossingQuantilesTotal.WithLabelValues(ps.Namespace, ps.Name, sig).Inc()
+	}
+
 	ps.Status.SignalStatuses = statuses
 	ps.Status.RecommendedReplicas = decision.Replicas
 	ps.Status.Breakdown = &v1alpha1.RecommendationBreakdown{
