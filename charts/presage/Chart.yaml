@@ -2,8 +2,8 @@ apiVersion: v2
 name: presage
 description: Forecast-driven autoscaling for Kubernetes and Agones, using TimesFM
 type: application
-version: 0.1.0
-appVersion: "0.1.0"
+version: 0.2.0
+appVersion: "0.2.0"
 kubeVersion: ">=1.27.0-0"
 home: https://github.com/breezycourses/presage
 # Rendered on the Artifact Hub listing. Must be a URL Artifact Hub can reach,
