@@ -7,9 +7,11 @@ poked with curl when a forecast looks wrong at 3am.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import logging
 import math
+import sys
 import threading
 import time
 from typing import Annotated, Any, AsyncIterator
@@ -69,6 +71,32 @@ class ForecastResponse(BaseModel):
     forecasts: list[ForecastOut]
 
 
+async def _watch_model_load(model: TimesFMModel, timeout: float) -> None:
+    """Wait for the model to finish loading, exiting the process on failure.
+
+    ``model.load()`` runs in a daemon thread so the process becomes live
+    immediately and the kubelet's readiness probe can track progress via
+    ``/readyz``.  A thread that fails silently, however, would leave the
+    process serving 503 forever with no outer signal to restart it.
+
+    This function runs as a background asyncio task alongside the lifespan.
+    It blocks on ``model.done_event`` for at most *timeout* seconds.
+    If the event is set: exit 1 when ``load_error`` is non-None.
+    If the event is never set: exit 1 after the timeout -- the thread may
+    have hung inside a C extension.
+    """
+    try:
+        await asyncio.to_thread(model.done_event.wait, timeout=timeout)
+    except asyncio.CancelledError:
+        return
+    if not model.done_event.is_set():
+        log.critical("model did not finish loading within %ss; exiting", timeout)
+        sys.exit(1)
+    if model.load_error:
+        log.critical("model failed to load: %s; exiting", model.load_error)
+        sys.exit(1)
+
+
 def create_app(cfg: Config | None = None, model: TimesFMModel | None = None) -> FastAPI:
     """Build the app.
 
@@ -82,11 +110,10 @@ def create_app(cfg: Config | None = None, model: TimesFMModel | None = None) -> 
     @contextlib.asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         if owns_model:
-            # Load off the event loop so the process becomes live immediately
-            # and only becomes *ready* once the weights are resident. A 200M
-            # model takes tens of seconds to pull and compile; blocking
-            # startup on it makes the pod look wedged to the kubelet.
             threading.Thread(target=model.load, name="model-load", daemon=True).start()
+            _task = asyncio.create_task(
+                _watch_model_load(model, cfg.load_timeout_seconds)
+            )
         yield
 
     app = FastAPI(title="presage-forecaster", version="0.1.0", lifespan=lifespan)

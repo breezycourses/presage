@@ -1,25 +1,37 @@
 """Tests for the HTTP surface, with a stub model (no torch required)."""
 
+import asyncio
 import json
+import sys
+import threading
 
 import pytest
 from fastapi.testclient import TestClient
 
 from presage_forecaster.config import Config
 from presage_forecaster.model import Forecast, QuantileHeadUnavailable
-from presage_forecaster.server import create_app
+from presage_forecaster.server import create_app, _watch_model_load
 
 
 class StubModel:
-    def __init__(self, ready=True, raises=None):
+    def __init__(self, ready=True, raises=None, load_error=None):
         self._ready = ready
         self._raises = raises
         self.name = "stub-model"
-        self.load_error = None
+        self._load_error = load_error
+        self._done = threading.Event()
 
     @property
-    def ready(self):
+    def ready(self) -> bool:
         return self._ready
+
+    @property
+    def load_error(self) -> str | None:
+        return self._load_error
+
+    @property
+    def done_event(self) -> threading.Event:
+        return self._done
 
     def load(self):
         pass
@@ -169,3 +181,28 @@ def test_batch_limit_enforced():
         },
     )
     assert resp.status_code == 413
+
+
+def test_watch_model_load_exits_on_load_error():
+    model = StubModel(load_error="Something went wrong", ready=False)
+
+    with pytest.raises(SystemExit) as exc_info:
+        asyncio.run(_watch_model_load(model, timeout=5.0))
+
+    assert exc_info.value.code == 1
+
+
+def test_watch_model_load_exits_on_timeout():
+    model = StubModel(ready=False)
+
+    with pytest.raises(SystemExit) as exc_info:
+        asyncio.run(_watch_model_load(model, timeout=0.1))
+
+    assert exc_info.value.code == 1
+
+
+def test_watch_model_load_succeeds_when_model_ready():
+    model = StubModel(ready=True)
+    model._done.set()
+
+    asyncio.run(_watch_model_load(model, timeout=5.0))
