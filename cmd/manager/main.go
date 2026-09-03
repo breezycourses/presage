@@ -11,6 +11,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -148,13 +149,7 @@ type webhookServer struct {
 	handler  http.Handler
 	certFile string
 	keyFile  string
-	log      logr
-}
-
-// logr is the minimal slice of the logging interface used here.
-type logr interface {
-	Info(msg string, keysAndValues ...any)
-	Error(err error, msg string, keysAndValues ...any)
+	log      logr.Logger
 }
 
 // NeedLeaderElection reports false: every replica serves the webhook.
