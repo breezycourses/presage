@@ -36,7 +36,7 @@ class StubModel:
     def load(self):
         pass
 
-    def forecast(self, series, horizon, quantiles):
+    async def forecast(self, series, horizon, quantiles):
         if self._raises:
             raise self._raises
         return [

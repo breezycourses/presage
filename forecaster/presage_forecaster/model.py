@@ -13,6 +13,7 @@ Two things here are load-bearing and easy to get wrong:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import threading
 import time
@@ -45,15 +46,16 @@ class QuantileHeadUnavailable(RuntimeError):
 class TimesFMModel:
     """A loaded, compiled TimesFM model.
 
-    Inference is serialised behind a lock. Torch will happily be re-entered
-    from multiple threads and then produce nondeterministic garbage under
-    memory pressure; a forecaster that answers a 30s control loop does not
-    need the concurrency badly enough to risk that.
+    Inference is serialised behind an asyncio lock. Torch will happily be
+    re-entered from multiple threads and then produce nondeterministic garbage
+    under memory pressure, so concurrent forecasts are serialised at the model
+    level while the rest of the server remains responsive for health checks,
+    status endpoints, and queue-handling between requests.
     """
 
     def __init__(self, cfg: Config) -> None:
         self._cfg = cfg
-        self._lock = threading.Lock()
+        self._lock = asyncio.Lock()
         self._model = None
         self._ready = False
         self._load_error: str | None = None
@@ -125,7 +127,7 @@ class TimesFMModel:
         finally:
             self._done.set()
 
-    def forecast(
+    async def forecast(
         self,
         series: Sequence[Sequence[float]],
         horizon: int,
@@ -135,6 +137,9 @@ class TimesFMModel:
 
         Each input is truncated to the compiled context length, keeping the
         most recent points.
+
+        Serialised behind an asyncio lock: Torch will happily be re-entered
+        from multiple threads, but under memory pressure produces garbage.
         """
         if not self._ready or self._model is None:
             raise RuntimeError(f"model not ready: {self._load_error or 'still loading'}")
@@ -152,7 +157,7 @@ class TimesFMModel:
             np.asarray(s[-self._cfg.max_context :], dtype=np.float32) for s in series
         ]
 
-        with self._lock:
+        async with self._lock:
             point, quantile = self._model.forecast(horizon=horizon, inputs=inputs)
 
         point = np.asarray(point)
