@@ -156,7 +156,7 @@ def create_app(cfg: Config | None = None, model: TimesFMModel | None = None) -> 
         }
 
     @app.post("/v1/forecast")
-    def forecast(req: ForecastRequest) -> JSONResponse:
+    async def forecast(req: ForecastRequest) -> JSONResponse:
         if len(req.series) > cfg.max_batch:
             return _error(f"batch of {len(req.series)} exceeds max_batch {cfg.max_batch}", 413)
 
@@ -169,7 +169,7 @@ def create_app(cfg: Config | None = None, model: TimesFMModel | None = None) -> 
 
         started = time.monotonic()
         try:
-            results = model.forecast(
+            results = await model.forecast(
                 series=[s.values for s in req.series],
                 horizon=req.horizon,
                 quantiles=req.quantiles,
