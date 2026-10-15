@@ -22,6 +22,7 @@ package agones
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -200,8 +201,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(review); err != nil {
-		// The response is already partially written; nothing useful is left to
-		// do but record it.
+		log.Printf("agones webhook: encoding response for %s/%s: %v", namespace, name, err)
 		h.served(namespace, name, false, "encode failed")
 	}
 }
