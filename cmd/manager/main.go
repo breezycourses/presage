@@ -26,6 +26,9 @@ import (
 	"github.com/breezycourses/presage/internal/obs"
 )
 
+// version is set at build time with -ldflags "-X main.version=...".
+var version = "dev"
+
 var scheme = runtime.NewScheme()
 
 func init() {
@@ -68,6 +71,7 @@ func main() {
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 	setupLog := ctrl.Log.WithName("setup")
+	setupLog.Info("starting presage", "version", version)
 
 	if (tlsCertFile == "") != (tlsKeyFile == "") {
 		setupLog.Error(errors.New("incomplete TLS configuration"),
