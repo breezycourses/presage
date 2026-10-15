@@ -3,7 +3,6 @@ package backtest
 import (
 	"fmt"
 	"math"
-	"sort"
 	"strings"
 	"time"
 )
@@ -357,12 +356,3 @@ func elapsedLabel(d time.Duration) string {
 		return d.Round(time.Minute).String()
 	}
 }
-
-func escape(s string) string {
-	r := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", `"`, "&quot;")
-	return r.Replace(s)
-}
-
-var _ = sort.Float64s
-
-var _ = escape
