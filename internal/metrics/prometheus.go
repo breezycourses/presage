@@ -28,11 +28,15 @@ type Client struct {
 
 // NewClient builds a client with a sane timeout.
 func NewClient(address, bearerToken string, insecureSkipVerify bool, timeout time.Duration) *Client {
-	transport := http.DefaultTransport
+	var transport http.RoundTripper
 	if insecureSkipVerify {
 		transport = &http.Transport{
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // opt-in
 		}
+	} else if dt, ok := http.DefaultTransport.(*http.Transport); ok {
+		transport = dt.Clone()
+	} else {
+		transport = http.DefaultTransport
 	}
 	return &Client{
 		Address:     strings.TrimRight(address, "/"),
