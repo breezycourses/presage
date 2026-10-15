@@ -118,6 +118,15 @@ var (
 		Name: "presage_crossing_quantiles_total",
 		Help: "Number of times quantile crossing was detected per signal.",
 	}, []string{"namespace", "name", "signal"})
+
+	// StatusUpdateErrors counts failed status subresource updates.  A
+	// sporadic Conflict is normal (another write beat us to it); sustained
+	// non-Conflict errors mean the API server is rejecting status patches
+	// and every condition and recommendation goes unrecorded.
+	StatusUpdateErrors = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "presage_status_update_errors_total",
+		Help: "Failed status subresource updates (non-Conflict).",
+	}, []string{"namespace", "name"})
 )
 
 // Forget drops every series for a scaler, so a deleted PredictiveScaler stops
@@ -134,6 +143,7 @@ func Forget(namespace, name, target string) {
 	SignalValue.DeletePartialMatch(nn)
 	SignalGaps.DeletePartialMatch(nn)
 	ForecastValue.DeletePartialMatch(nn)
+	StatusUpdateErrors.Delete(nn)
 }
 
 func init() {
@@ -143,5 +153,6 @@ func init() {
 		ConstraintTotal, ReconcileTotal, ScaleTotal,
 		ForecastDuration, ForecastErrorTotal, WebhookTotal, SignalGaps,
 		CrossingQuantilesTotal,
+		StatusUpdateErrors,
 	)
 }
