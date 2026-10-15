@@ -3,7 +3,6 @@ package backtest
 import (
 	"context"
 	"errors"
-	"fmt"
 	"math"
 	"testing"
 	"time"
@@ -286,5 +285,3 @@ func contains(haystack, needle string) bool {
 		return false
 	})()
 }
-
-var _ = fmt.Sprintf
