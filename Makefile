@@ -17,7 +17,7 @@ generate: ## Regenerate deepcopy, CRDs, and RBAC
 
 .PHONY: build
 build: ## Build the controller binary
-	go build -o bin/manager ./cmd/manager
+	go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o bin/manager ./cmd/manager
 
 .PHONY: test
 test: ## Run Go tests with the race detector
