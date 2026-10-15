@@ -26,17 +26,27 @@ type Client struct {
 	HTTP        *http.Client
 }
 
+// Transports are owned by this package rather than shared with
+// http.DefaultTransport, and are reused across clients so the controller,
+// which builds a client per evaluation, keeps one connection pool per mode.
+var (
+	secureTransport   = newTransport(false)
+	insecureTransport = newTransport(true)
+)
+
+func newTransport(insecureSkipVerify bool) *http.Transport {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	if insecureSkipVerify {
+		t.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // opt-in
+	}
+	return t
+}
+
 // NewClient builds a client with a sane timeout.
 func NewClient(address, bearerToken string, insecureSkipVerify bool, timeout time.Duration) *Client {
-	var transport http.RoundTripper
+	transport := secureTransport
 	if insecureSkipVerify {
-		transport = &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // opt-in
-		}
-	} else if dt, ok := http.DefaultTransport.(*http.Transport); ok {
-		transport = dt.Clone()
-	} else {
-		transport = http.DefaultTransport
+		transport = insecureTransport
 	}
 	return &Client{
 		Address:     strings.TrimRight(address, "/"),
