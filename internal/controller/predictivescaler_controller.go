@@ -204,8 +204,8 @@ func (r *PredictiveScalerReconciler) evaluate(ctx context.Context, ps *v1alpha1.
 		leadSteps := forecast.StepsFor(leadTime, sig.resolution)
 		horizon := durOr(horizonOf(ps), time.Duration(defaultHorizonFactor)*leadTime)
 		horizonSteps := forecast.StepsFor(horizon, sig.resolution)
-		if horizonSteps < leadSteps {
-			horizonSteps = leadSteps
+		if horizonSteps <= leadSteps {
+			horizonSteps = leadSteps + 1
 		}
 
 		started := time.Now()
