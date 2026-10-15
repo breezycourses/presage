@@ -91,9 +91,8 @@ func (r *PredictiveScalerReconciler) Reconcile(ctx context.Context, req ctrl.Req
 			r.AgonesStore.Delete(ps.Namespace, ps.Spec.ScaleTargetRef.Name)
 		}
 
-		if statusErr := r.Status().Update(ctx, &ps); statusErr != nil && !apierrors.IsConflict(statusErr) {
+		if statusErr := r.updateStatus(ctx, &ps); statusErr != nil && !apierrors.IsConflict(statusErr) {
 			logger.Error(statusErr, "status update failed")
-			obs.StatusUpdateErrors.WithLabelValues(ps.Namespace, ps.Name).Inc()
 		}
 		// The error is already recorded in status and metrics; returning it as
 		// well would double it up with controller-runtime's own exponential
@@ -102,13 +101,23 @@ func (r *PredictiveScalerReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	}
 
 	obs.ReconcileTotal.WithLabelValues(ps.Namespace, ps.Name, "success").Inc()
-	if err := r.Status().Update(ctx, &ps); err != nil {
+	if err := r.updateStatus(ctx, &ps); err != nil {
 		if apierrors.IsConflict(err) {
 			return ctrl.Result{Requeue: true}, nil
 		}
 		return ctrl.Result{}, err
 	}
 	return result, nil
+}
+
+// updateStatus writes ps.Status and counts failures other than Conflict, which
+// only means another write got there first.
+func (r *PredictiveScalerReconciler) updateStatus(ctx context.Context, ps *v1alpha1.PredictiveScaler) error {
+	err := r.Status().Update(ctx, ps)
+	if err != nil && !apierrors.IsConflict(err) {
+		obs.StatusUpdateErrors.WithLabelValues(ps.Namespace, ps.Name).Inc()
+	}
+	return err
 }
 
 // evaluate runs one full cycle and mutates ps.Status. It returns an error

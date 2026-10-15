@@ -143,6 +143,7 @@ func Forget(namespace, name, target string) {
 	SignalValue.DeletePartialMatch(nn)
 	SignalGaps.DeletePartialMatch(nn)
 	ForecastValue.DeletePartialMatch(nn)
+	StatusUpdateErrors.Delete(nn)
 }
 
 func init() {
