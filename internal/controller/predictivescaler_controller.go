@@ -93,6 +93,7 @@ func (r *PredictiveScalerReconciler) Reconcile(ctx context.Context, req ctrl.Req
 
 		if statusErr := r.Status().Update(ctx, &ps); statusErr != nil && !apierrors.IsConflict(statusErr) {
 			logger.Error(statusErr, "status update failed")
+			obs.StatusUpdateErrors.WithLabelValues(ps.Namespace, ps.Name).Inc()
 		}
 		// The error is already recorded in status and metrics; returning it as
 		// well would double it up with controller-runtime's own exponential
